@@ -1,0 +1,359 @@
+import { TICK_MS, TICK_RATE, KILLER_ZONE, KILLER_LEFT } from '../shared/constants.js';
+import { decodeTick } from '../shared/protocol.js';
+import { Net } from './net.js';
+import { Input } from './input.js';
+import { ClientGame } from './game.js';
+import { Renderer } from './render.js';
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('game');
+const ui = {
+  menu: $('menu'), lobby: $('lobby'), dead: $('dead'), end: $('end'), hud: $('hud'),
+  name: $('name'), play: $('play'), status: $('status'),
+  lobbyText: $('lobby-text'), lobbySub: $('lobby-sub'),
+  deadTitle: $('dead-title'), deadSub: $('dead-sub'),
+  endTitle: $('end-title'), ranking: $('ranking'), endSub: $('end-sub'),
+  alive: $('alive'), kills: $('kills'), zoneInfo: $('zone-info'), feed: $('feed'),
+  center: $('center-msg'), touchL: $('touch-left'), touchR: $('touch-right'),
+};
+
+const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+const net = new Net();
+const input = new Input(canvas);
+const game = new ClientGame(net);
+const renderer = new Renderer(canvas, $('minimap'));
+
+let mode = 'menu';        // menu | lobby | game
+let deadTimer = null;
+let endTimer = null;
+let spectateId = null;
+const cam = { x: 0, y: 0, scale: renderer.baseScale };
+
+// ---------------------------------------------------------------- UI helpers
+
+function show(el, on = true) { el.hidden = !on; }
+function hidePanels() { for (const p of [ui.menu, ui.lobby, ui.dead, ui.end]) show(p, false); }
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function nameHtml(sn) {
+  return `<b style="color:${sn.color}">${esc(sn.name)}</b>`;
+}
+
+function setMode(m) {
+  mode = m;
+  input.enabled = m === 'game';
+  show(ui.hud, m === 'game');
+  const touchHints = m === 'game' && isTouch;
+  show(ui.touchL, touchHints);
+  show(ui.touchR, touchHints);
+  if (m !== 'game') ui.center.innerHTML = '';
+}
+
+function toMenu(status = '') {
+  clearTimeout(deadTimer);
+  clearTimeout(endTimer);
+  hidePanels();
+  game.active = false;
+  setMode('menu');
+  show(ui.menu);
+  ui.status.textContent = status;
+}
+
+function savedName() {
+  try { return localStorage.getItem('cr-name') || ''; } catch { return ''; }
+}
+function saveName(n) {
+  try { localStorage.setItem('cr-name', n); } catch {}
+}
+
+async function goFullscreen() {
+  if (!isTouch) return;
+  try {
+    const el = document.documentElement;
+    if (!document.fullscreenElement && el.requestFullscreen) await el.requestFullscreen({ navigationUI: 'hide' });
+  } catch {}
+}
+
+let wakeLock = null;
+async function keepAwake() {
+  try { if ('wakeLock' in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+  if (wakeLock) wakeLock.addEventListener?.('release', () => { wakeLock = null; });
+}
+
+function join() {
+  const name = ui.name.value.trim();
+  saveName(name);
+  hidePanels();
+  setMode('lobby');
+  show(ui.lobby);
+  ui.lobbyText.textContent = 'Finding a match…';
+  ui.lobbySub.textContent = '';
+  net.send({ t: 'join', name });
+  goFullscreen();
+  keepAwake();
+}
+
+ui.name.value = savedName();
+ui.play.addEventListener('click', join);
+ui.name.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !ui.play.disabled) join(); });
+$('again').addEventListener('click', join);
+$('to-menu').addEventListener('click', () => { net.send({ t: 'leave' }); toMenu(); });
+addEventListener('keydown', (e) => {
+  if (e.code === 'Enter' && mode === 'menu' && document.activeElement !== ui.name && !ui.play.disabled) join();
+  if ((e.code === 'Space' || e.code === 'Enter') && mode === 'game' && !game.controlling && !ui.dead.hidden) join();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && mode !== 'menu') keepAwake();
+  // Animation frames stop in background tabs; send "straight" so the server
+  // doesn't keep repeating a held turn while we're away.
+  if (document.hidden && game.active && game.controlling) game.clientTick(0);
+});
+
+// Tap/click while spectating cycles through the surviving snakes.
+canvas.addEventListener('pointerdown', () => {
+  if (mode !== 'game' || game.controlling || !game.active) return;
+  const alive = game.list.filter((s) => s.alive);
+  if (!alive.length) return;
+  const i = alive.findIndex((s) => s.id === spectateId);
+  spectateId = alive[(i + 1) % alive.length].id;
+});
+
+// ---------------------------------------------------------------- kill feed
+
+function feed(html) {
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  ui.feed.appendChild(div);
+  while (ui.feed.children.length > 5) ui.feed.firstChild.remove();
+  setTimeout(() => { div.style.opacity = '0'; }, 4500);
+  setTimeout(() => div.remove(), 5000);
+}
+
+game.onEvent = (ev) => {
+  if (ev.type !== 'death') return;
+  const s = ev.snake;
+  const me = s === game.me;
+  if (ev.killerId === KILLER_ZONE) feed(`${nameHtml(s)} was caught by the zone`);
+  else if (ev.killerId === KILLER_LEFT) feed(`${nameHtml(s)} left`);
+  else if (ev.killer === s) feed(`${nameHtml(s)} crashed into their own line`);
+  else if (ev.killer) feed(`${nameHtml(ev.killer)} cut off ${nameHtml(s)}`);
+
+  if (me) {
+    spectateId = ev.killer && ev.killer !== s && ev.killer.alive ? ev.killer.id : null;
+    clearTimeout(deadTimer);
+    deadTimer = setTimeout(() => {
+      if (game.ended || mode !== 'game') return;
+      ui.deadTitle.textContent = `#${ev.msg.place} of ${game.total}`;
+      let why;
+      if (ev.killerId === KILLER_ZONE) why = 'Caught by the zone.';
+      else if (ev.killer === s) why = 'You crashed into your own line.';
+      else if (ev.killer) why = `Cut off by ${ev.killer.name}.`;
+      else why = 'You crashed.';
+      const k = game.me.kills;
+      ui.deadSub.textContent = `${why} ${k} kill${k === 1 ? '' : 's'}.`;
+      show(ui.dead);
+    }, 900);
+  } else if (spectateId === s.id) {
+    spectateId = ev.killer && ev.killer.alive ? ev.killer.id : null;
+  }
+};
+
+// ---------------------------------------------------------------- network
+
+net.onOpen = () => {
+  ui.play.disabled = false;
+  ui.play.textContent = 'PLAY';
+  if (mode === 'menu') ui.status.textContent = '';
+};
+
+net.onClose = () => {
+  ui.play.disabled = true;
+  ui.play.textContent = 'Connecting…';
+  toMenu('Connection lost. Reconnecting…');
+};
+
+net.onJson = (m) => {
+  switch (m.t) {
+    case 'hello':
+      ui.status.textContent = m.online > 1 ? `${m.online} players online` : '';
+      break;
+    case 'lobby':
+      if (mode === 'menu') return;
+      if (mode === 'game' && game.ended && !ui.end.hidden) {
+        // still showing results; the end panel shows the countdown
+        ui.endSub.textContent = `Next round in ${m.startsIn}s`;
+        return;
+      }
+      hidePanels();
+      setMode('lobby');
+      game.active = false;
+      show(ui.lobby);
+      ui.lobbyText.textContent = `Starting in ${m.startsIn}s`;
+      ui.lobbySub.textContent = m.players > 1
+        ? `${m.players} players in this match · bots fill the rest`
+        : 'Waiting for players · bots fill the rest';
+      break;
+    case 'start':
+      if (mode === 'menu') return;
+      clearTimeout(deadTimer);
+      clearTimeout(endTimer);
+      hidePanels();
+      game.start(m);
+      spectateId = null;
+      ui.feed.innerHTML = '';
+      setMode('game');
+      cam.x = game.me.xs[0];
+      cam.y = game.me.ys[0];
+      cam.scale = renderer.baseScale;
+      break;
+    case 'death':
+      if (game.active) game.onDeath(m);
+      break;
+    case 'end':
+      if (!game.active) return;
+      game.onEnd(m);
+      clearTimeout(deadTimer);
+      show(ui.dead, false);
+      // Let the final crash play out before showing results.
+      endTimer = setTimeout(() => showEnd(m), 1200);
+      break;
+    case 'error':
+      toMenu(m.msg || 'Something went wrong');
+      break;
+  }
+};
+
+net.onBinary = (buf) => {
+  if (!game.active) return;
+  const d = decodeTick(buf);
+  if (d) game.onTick(d);
+};
+
+function showEnd(m) {
+  if (mode !== 'game') return;
+  const winner = m.winner ? game.snakes.get(m.winner) : null;
+  if (winner && winner === game.me) ui.endTitle.textContent = '\u{1F3C6} You win!';
+  else if (winner) ui.endTitle.innerHTML = `\u{1F3C6} ${nameHtml(winner)} wins`;
+  else ui.endTitle.textContent = 'Draw!';
+  ui.ranking.innerHTML = m.ranking.slice(0, 10).map((r) => {
+    const s = game.snakes.get(r.id);
+    const me = r.id === game.myId;
+    return `<li class="${me ? 'me' : ''}">${s ? nameHtml(s) : esc(r.name)}${me ? ' (you)' : ''}<span class="k">${r.kills} kill${r.kills === 1 ? '' : 's'}</span></li>`;
+  }).join('');
+  const mine = m.ranking.find((r) => r.id === game.myId);
+  if (mine && mine.place > 10) {
+    ui.ranking.innerHTML += `<li class="me" value="${mine.place}">You<span class="k">${mine.kills} kills</span></li>`;
+  }
+  ui.endSub.textContent = 'Next round starting soon…';
+  show(ui.end);
+}
+
+// ---------------------------------------------------------------- main loop
+
+const myHead = { x: 0, y: 0, a: 0 };
+const spec = { x: 0, y: 0, a: 0 };
+let last = performance.now();
+let acc = 0;
+let hudAt = 0;
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(250, now - last);
+  last = now;
+
+  if (!game.active) {
+    renderer.drawIdle(now);
+    return;
+  }
+
+  input.pollGamepads();
+  let alpha = 0;
+  if (game.controlling) {
+    const tickMs = TICK_MS * game.tickScale;
+    acc += dt;
+    if (acc > tickMs * 4) acc = tickMs * 4;
+    while (acc >= tickMs) {
+      game.clientTick(input.turn);
+      acc -= tickMs;
+    }
+    alpha = acc / tickMs;
+  } else {
+    acc = 0;
+  }
+  game.decayOffset(dt);
+
+  const renderTick = game.renderTick(now);
+  const serverTick = game.serverTickNow(now);
+  const zone = game.zone(now);
+
+  // Camera
+  let targetScale = renderer.baseScale;
+  if (game.controlling) {
+    game.myHead(alpha, myHead);
+    cam.x = myHead.x;
+    cam.y = myHead.y;
+  } else {
+    let target = spectateId ? game.snakes.get(spectateId) : null;
+    if (!target || target.deathTick <= renderTick) {
+      target = game.me && game.me.deathTick > renderTick ? game.me : null;
+      if (!target && !game.ended) {
+        // follow the leader: most kills among the living
+        let best = null;
+        for (const s of game.list) if (s.alive && (!best || s.kills > best.kills)) best = s;
+        if (best) { spectateId = best.id; target = best; }
+      }
+    }
+    if (target) {
+      target.headAt(target.deathTick <= renderTick ? target.lastTick : renderTick, spec);
+    } else {
+      spec.x = cam.x; spec.y = cam.y;
+    }
+    const k = 1 - Math.exp(-dt / 180);
+    cam.x += (spec.x - cam.x) * k;
+    cam.y += (spec.y - cam.y) * k;
+    targetScale = renderer.baseScale * 0.8;
+  }
+  cam.scale += (targetScale - cam.scale) * (1 - Math.exp(-dt / 300));
+
+  renderer.draw(game, { now, renderTick, serverTick, alpha, myHead, cam, zone });
+
+  // Countdown / center message (every frame, cheap)
+  const toGo = (game.playTick - serverTick) / TICK_RATE;
+  if (toGo > 0) ui.center.innerHTML = `${Math.ceil(toGo)}<small>${isTouch ? 'hold left / right to steer' : '← → to steer'}</small>`;
+  else if (toGo > -0.8) ui.center.textContent = 'GO!';
+  else if (ui.center.innerHTML) ui.center.innerHTML = '';
+
+  // Touch hints
+  if (isTouch) {
+    const t = input.turn;
+    ui.touchL.classList.toggle('on', game.controlling && t < 0);
+    ui.touchR.classList.toggle('on', game.controlling && t > 0);
+  }
+
+  if (now - hudAt > 200) {
+    hudAt = now;
+    updateHud(zone, serverTick);
+  }
+}
+
+function updateHud(zone, serverTick) {
+  ui.alive.textContent = `\u{1F40D} ${game.aliveCount} / ${game.total} alive`;
+  const k = game.me ? game.me.kills : 0;
+  const rtt = net.rtt ? ` · ${Math.round(net.rtt)} ms` : '';
+  ui.kills.textContent = `⚔ ${k} kill${k === 1 ? '' : 's'}${rtt}`;
+  let txt = '', warn = false;
+  if (serverTick < game.playTick) txt = 'Get ready';
+  else if (game.ended) txt = 'Round over';
+  else if (zone.r <= 0) { txt = 'Zone closed'; warn = true; }
+  else if (zone.shrinking) { txt = `Zone closing! ${Math.ceil(zone.ticksLeft / TICK_RATE)}s`; warn = true; }
+  else if (zone.next) txt = `Zone shrinks in ${Math.ceil(zone.ticksLeft / TICK_RATE)}s`;
+  ui.zoneInfo.textContent = txt;
+  ui.zoneInfo.classList.toggle('warn', warn);
+}
+
+if (new URLSearchParams(location.search).has('debug')) window.__cr = { game, net, input };
+
+requestAnimationFrame(frame);
+net.connect();

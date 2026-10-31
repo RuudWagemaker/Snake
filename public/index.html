@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0f17">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="Curve Royale: steer your line, cut off your rivals and be the last snake standing while the zone closes in.">
+  <title>Curve Royale</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud" hidden>
+    <div id="hud-left">
+      <div id="alive" class="pill"></div>
+      <div id="kills" class="pill"></div>
+    </div>
+    <div id="zone-info" class="pill"></div>
+    <canvas id="minimap" width="140" height="140"></canvas>
+    <div id="feed"></div>
+  </div>
+
+  <div id="center-msg"></div>
+
+  <div id="touch-left" class="touch-ind" hidden><span>&#9664;</span></div>
+  <div id="touch-right" class="touch-ind" hidden><span>&#9654;</span></div>
+
+  <div id="menu" class="panel">
+    <h1>Curve<span>Royale</span></h1>
+    <p class="tag">Draw your line. Cut them off. Outlast the zone.</p>
+    <input id="name" maxlength="16" placeholder="Nickname" autocomplete="off" spellcheck="false" enterkeyhint="go">
+    <button id="play" disabled>Connecting&hellip;</button>
+    <div class="howto">
+      <div><b>Keyboard</b> &larr; &rarr; or A / D</div>
+      <div><b>Touch</b> hold the left or right side of the screen</div>
+      <div><b>Gamepad</b> stick, d-pad or shoulder buttons</div>
+    </div>
+    <div id="status" class="small"></div>
+  </div>
+
+  <div id="lobby" class="panel compact" hidden>
+    <div class="spinner"></div>
+    <div id="lobby-text">Finding players&hellip;</div>
+    <div id="lobby-sub" class="small"></div>
+  </div>
+
+  <div id="dead" class="panel bottom" hidden>
+    <h2 id="dead-title"></h2>
+    <p id="dead-sub"></p>
+    <div class="row">
+      <button id="again">Play again</button>
+      <button id="to-menu" class="ghost">Menu</button>
+    </div>
+    <p class="small">Or keep watching: you join the next round here automatically. Tap to switch view.</p>
+  </div>
+
+  <div id="end" class="panel" hidden>
+    <h2 id="end-title"></h2>
+    <ol id="ranking"></ol>
+    <p id="end-sub" class="small"></p>
+  </div>
+
+  <script type="module" src="client/main.js"></script>
+</body>
+</html>
