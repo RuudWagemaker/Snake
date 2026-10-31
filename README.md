@@ -40,6 +40,20 @@ Run the tests: `npm test`
 
 ## Deploy
 
+### Render (free, easiest)
+
+The repo includes a `render.yaml` blueprint.
+
+1. Sign in at [dashboard.render.com](https://dashboard.render.com) with GitHub.
+2. **New > Blueprint**, pick this repository, then **Apply**.
+3. After a couple of minutes the game is live at `https://curve-royale-xxxx.onrender.com`.
+
+Every push to the branch redeploys automatically. The free plan sleeps after 15
+minutes without visitors, and the first visit after that takes about a minute to wake it.
+A paid instance stays awake.
+
+### Anywhere else
+
 It's one Node.js process serving both the website and the WebSocket (`/ws`), so any
 host that runs Node or Docker works (Fly.io, Render, Railway, a VPS, ...).
 
