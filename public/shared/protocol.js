@@ -4,6 +4,7 @@
 //   u8 type=1 | u32 seq | i8 turn
 // TICK   (server -> client), 11 + 14*n bytes:
 //   u8 type=2 | u32 tick | u32 ack | u8 buffered | u8 count | count * entry
+//   buffered: low 7 bits = inputs still queued, high bit = queue was empty this tick
 //   entry: u8 id | f32 x | f32 y | f32 angle | u8 flags (bit0 gap, bit1 died this tick)
 
 export const MSG_INPUT = 1;
@@ -49,11 +50,11 @@ export function encodeTickBody(entries) {
 }
 
 /** Fill in the per-client header fields (in place). */
-export function writeTickHeader(u8, tick, ack, buffered) {
+export function writeTickHeader(u8, tick, ack, buffered, starved = false) {
   const v = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   v.setUint32(1, tick);
   v.setUint32(5, ack);
-  v.setUint8(9, Math.min(255, buffered));
+  v.setUint8(9, Math.min(127, buffered) | (starved ? 0x80 : 0));
 }
 
 export function decodeTick(arrayBuffer) {
@@ -72,5 +73,6 @@ export function decodeTick(arrayBuffer) {
     };
     o += TICK_ENTRY;
   }
-  return { tick: v.getUint32(1), ack: v.getUint32(5), buffered: v.getUint8(9), entries };
+  const b = v.getUint8(9);
+  return { tick: v.getUint32(1), ack: v.getUint32(5), buffered: b & 0x7f, starved: (b & 0x80) !== 0, entries };
 }

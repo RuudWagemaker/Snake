@@ -341,8 +341,10 @@ function frame(now) {
 function updateHud(zone, serverTick) {
   ui.alive.textContent = `\u{1F40D} ${game.aliveCount} / ${game.total} alive`;
   const k = game.me ? game.me.kills : 0;
-  const rtt = net.rtt ? ` · ${Math.round(net.rtt)} ms` : '';
-  ui.kills.textContent = `⚔ ${k} kill${k === 1 ? '' : 's'}${rtt}`;
+  const ms = Math.round(net.rtt);
+  const col = ms > 150 ? '#ff6b6b' : ms > 80 ? '#ffd43b' : '#69db7c';
+  const rtt = ms ? ` · <span style="color:${col}">${ms} ms</span>` : '';
+  ui.kills.innerHTML = `⚔ ${k} kill${k === 1 ? '' : 's'}${rtt}`;
   let txt = '', warn = false;
   if (serverTick < game.playTick) txt = 'Get ready';
   else if (game.ended) txt = 'Round over';

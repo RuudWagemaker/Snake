@@ -13,8 +13,10 @@ import { TICK_MS } from '../shared/constants.js';
 import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit } from '../shared/sim.js';
 import { FLAG_GAP, FLAG_DIED, encodeInput } from '../shared/protocol.js';
 
-const INTERP_TICKS = 2.5;   // how far in the past remote snakes are shown
+const MIN_INTERP = 2;       // remote snakes are shown at least this many ticks in the past
+const MAX_INTERP = 12;
 const MAX_PENDING = 90;
+const WINDOW = 90;          // ticks of history used to measure jitter (3 s)
 
 export class Snake {
   constructor(info) {
@@ -129,6 +131,11 @@ export class ClientGame {
     this.clockOffset = null;
     this.bufferedAvg = 2;
     this.tickScale = 1;
+    this.bufHist = [];       // server-side input queue length per tick
+    this.starvedAt = -1e9;   // last tick our input arrived too late
+    this.lateHist = [];      // how late each tick message arrived (ticks)
+    this.interp = MIN_INTERP + 1;
+    this.lastRenderNow = 0;
   }
 
   // ---- server messages -------------------------------------------------
@@ -154,13 +161,30 @@ export class ClientGame {
     // Clock sync: estimate which server tick "now" corresponds to. Biased toward
     // the earliest arrivals so late packets don't drag the estimate around.
     const sample = d.tick - performance.now() / TICK_MS;
-    if (this.clockOffset === null || sample - this.clockOffset > 15 || sample - this.clockOffset < -15) this.clockOffset = sample;
+    if (this.clockOffset === null || sample - this.clockOffset > 15 || sample - this.clockOffset < -30) this.clockOffset = sample;
     else if (sample > this.clockOffset) this.clockOffset += (sample - this.clockOffset) * 0.25;
-    else this.clockOffset += (sample - this.clockOffset) * 0.02;
+    else this.clockOffset += (sample - this.clockOffset) * 0.01;
 
-    // Input pacing: keep ~1-2 inputs buffered on the server.
+    // Jitter: how late was this message compared to the earliest arrivals?
+    // Remote snakes are delayed just enough to cover the worst recent lateness.
+    pushWindow(this.lateHist, Math.max(0, this.clockOffset - sample));
+
+    // Input pacing. The server tells us how many of our inputs are queued and
+    // whether it ran out this tick. Keep the smallest queue over the last few
+    // seconds at about 1: never empty, but no extra delay either. On a jittery
+    // connection this automatically grows the buffer.
     this.bufferedAvg = this.bufferedAvg * 0.9 + d.buffered * 0.1;
-    this.tickScale = this.bufferedAvg < 0.8 ? 0.94 : this.bufferedAvg > 2.5 ? 1.06 : 1;
+    if (this.controlling) {
+      // Ignore the first second: the server starts before our first input can arrive.
+      if (d.starved && d.tick > 30) this.starvedAt = d.tick;
+      pushWindow(this.bufHist, d.buffered);
+      const minBuf = Math.min(...this.bufHist);
+      const sinceStarved = d.tick - this.starvedAt;
+      if (sinceStarved < 45) this.tickScale = 0.92;                    // input arrived late: build buffer fast
+      else if (minBuf < 1) this.tickScale = 0.97;                      // cutting it close
+      else if (minBuf > 2 && sinceStarved > 150) this.tickScale = 1.04; // 5 s stable: trim excess delay
+      else this.tickScale = 1;
+    }
 
     if (mine) {
       if (mine.flags & FLAG_DIED) this.controlling = false;
@@ -238,7 +262,7 @@ export class ClientGame {
   }
 
   decayOffset(dtMs) {
-    const k = Math.exp(-dtMs / 90);
+    const k = Math.exp(-dtMs / 120);
     this.offset.x *= k;
     this.offset.y *= k;
   }
@@ -251,9 +275,17 @@ export class ClientGame {
   }
 
   renderTick(now) {
-    let t = this.serverTickNow(now) - INTERP_TICKS;
+    // Ease the interpolation delay toward what the measured jitter needs.
+    const dt = Math.min(100, Math.max(0, now - this.lastRenderNow));
+    this.lastRenderNow = now;
+    const worst = this.lateHist.length ? Math.max(...this.lateHist) : 0;
+    const target = Math.min(MAX_INTERP, Math.max(MIN_INTERP, 1 + worst * 1.1));
+    // Grow fast (avoid stutter), shrink slowly (avoid visible speed changes).
+    const rate = target > this.interp ? 1 / 300 : 1 / 3000;
+    this.interp += (target - this.interp) * Math.min(1, dt * rate);
+    let t = this.serverTickNow(now) - this.interp;
     if (t > this.latestTick) t = this.latestTick;
-    if (t < this.latestTick - 8) t = this.latestTick - 8;
+    if (t < this.latestTick - MAX_INTERP - 3) t = this.latestTick - MAX_INTERP - 3;
     return t;
   }
 
@@ -280,4 +312,9 @@ export class ClientGame {
   zone(now) {
     return zoneAt(this.plan, this.serverTickNow(now) - this.playTick);
   }
+}
+
+function pushWindow(arr, v) {
+  arr.push(v);
+  if (arr.length > WINDOW) arr.shift();
 }

@@ -68,6 +68,11 @@ test('binary protocol round trip', () => {
   assert.equal(d.buffered, 2);
   assert.deepEqual(d.entries[0], { id: 5, x: 1.5, y: -2.25, a: 0.5, flags: 3 });
   assert.equal(d.entries[1].id, 9);
+  assert.equal(d.starved, false);
+  writeTickHeader(body, 778, 556, 3, true);
+  const d2 = decodeTick(body.buffer);
+  assert.equal(d2.buffered, 3);
+  assert.equal(d2.starved, true);
 });
 
 test('rng is deterministic', () => {

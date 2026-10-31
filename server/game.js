@@ -3,7 +3,7 @@ import { TICK_MS } from '../public/shared/constants.js';
 import { decodeInput } from '../public/shared/protocol.js';
 import { Room } from './room.js';
 
-const MAX_QUEUE = 8;          // max buffered inputs per player
+const MAX_QUEUE = 32;         // max buffered inputs per player (~1 s); bursts on bad connections must fit
 const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
 
 // Development aid: simulate a bad network. SIM_LAG_MS is one-way delay in each
@@ -12,11 +12,19 @@ const SIM_LAG_MS = Number(process.env.SIM_LAG_MS) || 0;
 const SIM_JITTER_MS = Number(process.env.SIM_JITTER_MS) || 0;
 function makeDelayer() {
   if (!SIM_LAG_MS && !SIM_JITTER_MS) return null;
-  let lastAt = 0;
+  // Strict FIFO with one timer, so messages are never reordered (TCP never does).
+  const queue = [];
+  let timer = null;
+  const flush = () => {
+    timer = null;
+    const now = performance.now();
+    while (queue.length && queue[0].at <= now) queue.shift().fn();
+    if (queue.length) timer = setTimeout(flush, queue[0].at - now);
+  };
   return (fn) => {
-    const at = Math.max(lastAt, Date.now() + SIM_LAG_MS + Math.random() * SIM_JITTER_MS);
-    lastAt = at;
-    setTimeout(fn, at - Date.now());
+    const last = queue.length ? queue[queue.length - 1].at : 0;
+    queue.push({ at: Math.max(last, performance.now() + SIM_LAG_MS + Math.random() * SIM_JITTER_MS), fn });
+    if (!timer) timer = setTimeout(flush, queue[0].at - performance.now());
   };
 }
 
@@ -36,6 +44,7 @@ class Client {
     this.queue = [];      // pending inputs {seq, turn}
     this.ack = 0;         // last input seq applied by the simulation
     this.lastSeq = 0;     // last seq received
+    this.starved = false; // input queue ran dry this tick
     this.isAlive = true;  // heartbeat
     this.delayIn = makeDelayer();
     this.delayOut = makeDelayer();

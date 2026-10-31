@@ -44,6 +44,10 @@ Run the tests: `npm test`
 
 The repo includes a `render.yaml` blueprint.
 
+The service runs in Frankfurt (`region` in `render.yaml`). Pick the region closest
+to your players, because ping matters a lot in this game. Render can't move an existing
+service, so changing it means deleting the service and creating it again.
+
 1. Sign in at [dashboard.render.com](https://dashboard.render.com) with GitHub.
 2. **New > Blueprint**, pick this repository, then **Apply**.
 3. After a couple of minutes the game is live at `https://curve-royale-xxxx.onrender.com`.
@@ -89,11 +93,13 @@ server/          Node.js server (matchmaking, rooms, authoritative simulation, b
   (reconciliation). State is kept as float32 on both sides and gap timing comes from a
   shared seed, so the replay usually matches the server exactly. When it doesn't (a late
   packet), the small difference is blended out over ~100 ms instead of snapping.
-* **Other snakes:** shown ~80 ms in the past and interpolated between server ticks, so
-  they move smoothly even on a jittery connection.
-* **Input pacing:** the server reports how many of your inputs it has queued, and the
-  client speeds up or slows down slightly to keep that buffer small. This keeps latency
-  low without the server running out of input.
+* **Other snakes:** shown slightly in the past and interpolated between server ticks.
+  The client measures how unevenly updates arrive and adjusts the delay (about 70 ms on a
+  good connection, more on a jittery one), so other snakes never freeze or jump.
+* **Input pacing:** the server reports how many of your inputs it has queued, and flags
+  every tick where your input arrived too late. The client sends slightly faster or
+  slower to keep the smallest queue at about one input. A bad connection automatically
+  gets a bigger buffer, and a good one gets almost none.
 * State updates are compact binary (14 bytes per snake per tick). Everything else is JSON.
 
 ### Match flow

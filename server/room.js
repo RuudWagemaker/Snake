@@ -196,8 +196,11 @@ export class Room {
         if (inp) {
           p.turn = inp.turn;
           p.client.ack = inp.seq;
+        } else {
+          // No input this tick (late packet): keep the previous turn and tell
+          // the client, so it can keep a bigger buffer.
+          p.client.starved = true;
         }
-        // No input this tick (late packet): keep the previous turn.
       } else if (moving) {
         p.turn = botThink(p, r, zone, zt, t);
       }
@@ -275,7 +278,8 @@ export class Room {
     const body = encodeTickBody(entries);
     for (const c of this.clients) {
       const msg = new Uint8Array(body); // copy, header differs per client
-      writeTickHeader(msg, t, c.ack, c.queue.length);
+      writeTickHeader(msg, t, c.ack, c.queue.length, c.starved);
+      c.starved = false;
       c.sendBinary(msg);
     }
   }
