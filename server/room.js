@@ -5,12 +5,15 @@ import {
 import {
   mulberry32, stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit,
 } from '../public/shared/sim.js';
-import { encodeTickBody, writeTickHeader, FLAG_GAP, FLAG_DIED } from '../public/shared/protocol.js';
+import { encodeTickBody, writeTickHeader, FLAG_GAP, FLAG_DIED, MAX_FUTURE } from '../public/shared/protocol.js';
 import { botThink, botName } from './bot.js';
 
 const LOBBY_TICKS = LOBBY_SECONDS * TICK_RATE;
 const COUNTDOWN_TICKS = COUNTDOWN_SECONDS * TICK_RATE;
 const END_TICKS = END_SECONDS * TICK_RATE;
+// Bots decide their steering this many ticks ahead. Their path is then known in
+// advance, so clients can draw them "in the present" exactly, without guessing.
+const BOT_AHEAD = 8;
 
 function makeSpawns(rng, n, R0) {
   const spawns = [];
@@ -156,6 +159,7 @@ export class Room {
         deathTick: -1,
         gaps: new GapSchedule(seed, id),
         brain: null,
+        botQueue: client ? null : new Array(BOT_AHEAD).fill(0), // decided turns for the next ticks
       };
       players.push(p);
       if (client) {
@@ -201,7 +205,7 @@ export class Room {
         if (turn !== null) p.turn = turn;
         if (inp.missing) p.client.starved = true; // tell the client
       } else if (moving) {
-        p.turn = botThink(p, r, zone, zt, t);
+        p.turn = p.botQueue.length ? p.botQueue.shift() : 0;
       }
     }
 
@@ -236,6 +240,8 @@ export class Room {
       }
     }
 
+    if (moving) this.planBots(deaths, t);
+
     r.tick = t;
     for (const p of deaths.keys()) p.deathTick = t;
     this.broadcastTick(t);
@@ -246,6 +252,20 @@ export class Room {
     }
 
     if (moving && r.aliveCount <= 1) this.endRound();
+  }
+
+  /** Each bot decides its turn for the tick after its queue, from where it will be then. */
+  planBots(deaths, t) {
+    const r = this.round;
+    for (const p of r.players) {
+      if (!p.bot || !p.alive || deaths.has(p)) continue;
+      const v = { id: p.id, x: p.x, y: p.y, a: p.a, brain: p.brain };
+      for (const q of p.botQueue) stepSnake(v, q);
+      const T = t + p.botQueue.length + 1;
+      const zt = T - r.playTick;
+      p.botQueue.push(botThink(v, r, zoneAt(r.plan, zt), zt, T));
+      p.brain = v.brain;
+    }
   }
 
   kill(p, killer, place, t) {
@@ -270,6 +290,7 @@ export class Room {
         entries.push({
           id: p.id, x: p.x, y: p.y, a: p.a,
           flags: (p.solid ? 0 : FLAG_GAP) | (p.deathTick === t ? FLAG_DIED : 0),
+          future: !p.alive ? null : p.bot ? p.botQueue.slice(0, MAX_FUTURE) : p.client ? p.client.inputs.upcoming(t, MAX_FUTURE) : null,
         });
       }
     }

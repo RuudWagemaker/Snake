@@ -60,13 +60,14 @@ test('collision: trails, own neck, zone', () => {
 test('binary protocol round trip', () => {
   const inp = decodeInput(new Uint8Array(encodeInput(123456, -1)));
   assert.deepEqual(inp, { tick: 123456, turn: -1 });
-  const body = encodeTickBody([{ id: 5, x: 1.5, y: -2.25, a: 0.5, flags: 3 }, { id: 9, x: 100, y: 200, a: -1, flags: 0 }]);
+  const body = encodeTickBody([{ id: 5, x: 1.5, y: -2.25, a: 0.5, flags: 3, future: [1, 0, -1, -1] }, { id: 9, x: 100, y: 200, a: -1, flags: 0 }]);
   writeTickHeader(body, 777, 780, false);
   const d = decodeTick(body.buffer);
   assert.equal(d.tick, 777);
   assert.equal(d.lastInput, 780);
   assert.equal(d.starved, false);
-  assert.deepEqual(d.entries[0], { id: 5, x: 1.5, y: -2.25, a: 0.5, flags: 3 });
+  assert.deepEqual(d.entries[0], { id: 5, x: 1.5, y: -2.25, a: 0.5, flags: 3, future: [1, 0, -1, -1] });
+  assert.equal(d.entries[1].future, null);
   assert.equal(d.entries[1].id, 9);
   writeTickHeader(body, 778, 779, true);
   assert.equal(decodeTick(body.buffer).starved, true);

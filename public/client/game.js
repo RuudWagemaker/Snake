@@ -28,6 +28,13 @@ const MAX_PENDING = 120;
 const WINDOW = 150;         // ticks of history used to measure jitter (5 s)
 export const CHUNK = 64;    // trail points per cached Path2D (renderer)
 const UDP_REDUNDANCY = 12;  // each UDP input packet repeats this many recent inputs
+// How other snakes are shown (tunable via the URL for experiments, e.g. ?shift=0.5):
+//  shift:   0 = in the past (smooth), 1 = at the moment of your own snake (fair)
+//  turnavg: ticks of turning history used to project a snake forward
+//  glide:   ms over which corrections of projected snakes fade out
+const params = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
+const num = (k, d) => (params.has(k) && !Number.isNaN(Number(params.get(k))) ? Number(params.get(k)) : d);
+export const VIEW = { shift: num('shift', 1), turnavg: num('turnavg', 1), glide: num('glide', 200) };
 const MIN_LEAD_MARGIN = 1;
 const MAX_LEAD_MARGIN = 6;
 
@@ -206,6 +213,8 @@ export class ClientGame {
       }
       s.append(d.tick, e.x, e.y, e.a, e.flags);
       this.addSegment(s, d.tick);
+      s.future = e.future;          // turns for ticks d.tick+1 ... (may be null)
+      s.futureFrom = d.tick + 1;
       if (e.flags & FLAG_DIED) {
         s.alive = false;
         s.deathTick = d.tick;
@@ -440,7 +449,7 @@ export class ClientGame {
     this.offset.x *= k;
     this.offset.y *= k;
     if (Math.hypot(this.offset.x, this.offset.y) < 1) this.offsetTau = 120;
-    const kr = Math.exp(-dtMs / 200);
+    const kr = Math.exp(-dtMs / VIEW.glide);
     for (const s of this.list) {
       if (s.vox || s.voy) {
         s.vox *= kr; s.voy *= kr;
@@ -466,7 +475,7 @@ export class ClientGame {
     // While we control a snake, show the others at the moment our own snake is
     // shown (lead - 1 ticks ahead of server time), instead of in the past. The
     // shift eases in and out so nobody visibly jumps or runs backwards.
-    const want = this.controlling && this.lead !== null ? this.lead - 1 + this.interp : 0;
+    const want = this.controlling && this.lead !== null ? (this.lead - 1 + this.interp) * VIEW.shift : 0;
     const maxStep = 10 * dt / 1000;
     this.shift += Math.max(-maxStep, Math.min(maxStep, want - this.shift));
     let t = this.serverTickNow(now) - this.interp + this.shift;
@@ -485,12 +494,11 @@ export class ClientGame {
     const k = Math.min(rt - s.lastTick, MAX_EXTRAP);
     if (k <= 0 || !s.alive) return null;
     const i = s.n - 1;
-    let turn = 0;
-    if (i > 0) {
-      let da = s.as[i] - s.as[i - 1];
-      if (da > Math.PI) da -= Math.PI * 2; else if (da < -Math.PI) da += Math.PI * 2;
-      if (Math.abs(da) > TURN_RATE * DT * 0.5) turn = Math.sign(da);
-    }
+    // Known upcoming turns (from the server) are exact. Past those, assume the
+    // snake keeps its last known turn.
+    const fut = s.future && s.futureFrom === s.lastTick + 1 ? s.future : null;
+    const guess = fut && fut.length ? fut[fut.length - 1] : this.recentTurn(s, i);
+    const turnAt = (j) => (fut && j - 1 < fut.length ? fut[j - 1] : guess);
     const st = { x: s.xs[i], y: s.ys[i], a: s.as[i] };
     const pts = [];
     const whole = Math.floor(k);
@@ -500,7 +508,7 @@ export class ClientGame {
     for (let j = 1; j <= whole + 1; j++) {
       const t = s.lastTick + j;
       const nx = { x: st.x, y: st.y, a: st.a };
-      if (t > this.playTick) stepSnake(nx, turn);
+      if (t > this.playTick) stepSnake(nx, turnAt(j));
       if (t > this.playTick && checkHit(this.grid, zone, nx.x, nx.y, s.id, t) !== null) {
         return { pts, head: st };
       }
@@ -515,6 +523,31 @@ export class ClientGame {
       pts.push({ x: st.x, y: st.y, solid: solidAt(t) });
     }
     return { pts, head: st };
+  }
+
+  /**
+   * Which way a snake is turning, for projecting it forward. With turnavg > 1
+   * this is a recency-weighted average of its last ticks (a fraction between -1
+   * and 1): a snake that zig-zags is projected nearly straight, which is what
+   * it does on average, instead of flipping left/right with every update.
+   */
+  recentTurn(s, i) {
+    const n = Math.max(1, Math.round(VIEW.turnavg));
+    if (i < 1) return 0;
+    if (n === 1) {
+      let da = s.as[i] - s.as[i - 1];
+      if (da > Math.PI) da -= Math.PI * 2; else if (da < -Math.PI) da += Math.PI * 2;
+      return Math.abs(da) > TURN_RATE * DT * 0.5 ? Math.sign(da) : 0;
+    }
+    let sum = 0, wsum = 0, w = 1;
+    for (let j = 0; j < n && i - j > 0; j++, w *= 0.75) {
+      if (s.firstTick + i - j <= this.playTick) break;
+      let da = s.as[i - j] - s.as[i - j - 1];
+      if (da > Math.PI) da -= Math.PI * 2; else if (da < -Math.PI) da += Math.PI * 2;
+      sum += w * Math.max(-1, Math.min(1, da / (TURN_RATE * DT)));
+      wsum += w;
+    }
+    return wsum ? sum / wsum : 0;
   }
 
   /** Predicted own head, interpolated between ticks. */

@@ -141,14 +141,19 @@ server/          Node.js server (matchmaking, rooms, authoritative simulation, b
   permanent input delay. The margin grows by a tick when an input is late and shrinks
   again after a few quiet seconds.
 * **Other snakes:** while you play, they're shown at the same moment as your own
-  (predicted) snake, projected forward along their current curve. Your own snake is
-  shown slightly ahead of the server (to feel instant). If others were shown in the
-  past, you could look "clearly ahead" on screen while really being nose to nose,
-  and both die in a head-on crash. Curve Fever snakes are predictable (constant speed,
-  known turn and gaps), so the projection is usually within a unit or two of the
-  truth, and corrections glide in. While spectating, snakes are shown slightly in the
-  past and interpolated. If updates stop for a moment, snakes keep moving (up to 1 s)
-  instead of freezing.
+  (predicted) snake, so what you see matches what the server decides when lines
+  cross. Your own snake is shown slightly ahead of the server so it feels instant;
+  if others were shown in the past, you could look "clearly ahead" while really being
+  nose to nose. Showing them ahead doesn't need guessing, because every update
+  carries each snake's next turns that are already decided:
+  - **Bots** decide their steering 8 ticks ahead. They plan from where they'll be,
+    so they play just as well, and they're drawn exactly.
+  - **Players'** inputs reach the server a few ticks before they're applied.
+  Only what's beyond that is projected along the snake's current curve, and
+  corrections glide in. While spectating, snakes are shown slightly in the past and
+  interpolated. If updates stop for a moment, snakes keep moving (up to 1 s) instead
+  of freezing. For experiments, `?shift=0..1`, `?turnavg=N` and `?glide=ms` in the
+  URL change how other snakes are shown.
 * **UDP when possible:** if the server has `RTC_PORT` set, the browser also opens a
   WebRTC data channel (unordered, no re-sends). State goes out over both UDP and
   WebSocket, and the client uses whichever copy arrives first. Inputs also go over
@@ -157,7 +162,7 @@ server/          Node.js server (matchmaking, rooms, authoritative simulation, b
   re-send timers, which typically doubles the stall. Ticks that UDP lost are estimated
   right away and replaced by the real data when the WebSocket copy arrives. If UDP is
   blocked, the game quietly stays on WebSocket.
-* State updates are compact binary (14 bytes per snake per tick). Everything else is JSON.
+* State updates are compact binary (17 bytes per snake per tick, including upcoming turns). Everything else is JSON.
 
 ### Match flow
 

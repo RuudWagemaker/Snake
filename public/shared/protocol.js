@@ -7,11 +7,14 @@
 // INPUTS (client -> server over UDP), 6 + n bytes:
 //   u8 type=3 | u32 lastTick | u8 n | n * i8 turn (for ticks lastTick-n+1 .. lastTick)
 //   Every UDP packet repeats the recent inputs, so a lost packet costs nothing.
-// TICK   (server -> client), 11 + 14*n bytes:
+// TICK   (server -> client), 11 + 17*n bytes:
 //   u8 type=2 | u32 tick | u32 lastInput | u8 flags | u8 count | count * entry
 //   lastInput: newest input tick received from this client
 //   flags: bit7 = this client's input for `tick` was missing (arrived late)
 //   entry: u8 id | f32 x | f32 y | f32 angle | u8 flags (bit0 gap, bit1 died this tick)
+//          | u8 n | u16 turns: the snake's next n turns (n <= 8, 2 bits each, turn+1),
+//            already decided (bots plan ahead, players' inputs arrive early). Lets
+//            clients draw other snakes slightly ahead in time without guessing.
 
 export const MSG_INPUT = 1;
 export const MSG_TICK = 2;
@@ -19,7 +22,8 @@ export const MSG_INPUTS = 3;
 export const FLAG_GAP = 1;
 export const FLAG_DIED = 2;
 export const TICK_HEADER = 11;
-export const TICK_ENTRY = 14;
+export const TICK_ENTRY = 17;
+export const MAX_FUTURE = 8;
 
 export function encodeInput(tick, turn) {
   const buf = new ArrayBuffer(6);
@@ -80,6 +84,12 @@ export function encodeTickBody(entries) {
     v.setFloat32(o + 5, e.y);
     v.setFloat32(o + 9, e.a);
     v.setUint8(o + 13, e.flags);
+    const fut = e.future || [];
+    const n = Math.min(MAX_FUTURE, fut.length);
+    let packed = 0;
+    for (let i = 0; i < n; i++) packed |= (fut[i] + 1) << (2 * i);
+    v.setUint8(o + 14, n);
+    v.setUint16(o + 15, packed);
     o += TICK_ENTRY;
   }
   return out;
@@ -106,7 +116,15 @@ export function decodeTick(arrayBuffer) {
       y: v.getFloat32(o + 5),
       a: v.getFloat32(o + 9),
       flags: v.getUint8(o + 13),
+      future: null,
     };
+    const n = Math.min(MAX_FUTURE, v.getUint8(o + 14));
+    if (n) {
+      const packed = v.getUint16(o + 15);
+      const fut = new Array(n);
+      for (let k = 0; k < n; k++) fut[k] = ((packed >> (2 * k)) & 3) - 1;
+      entries[i].future = fut;
+    }
     o += TICK_ENTRY;
   }
   return { tick: v.getUint32(1), lastInput: v.getUint32(5), starved: (v.getUint8(9) & 0x80) !== 0, entries };

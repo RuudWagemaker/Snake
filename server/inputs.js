@@ -28,10 +28,23 @@ export class InputBuffer {
       return false;
     }
     const slot = tick & (SIZE - 1);
+    // First copy wins: inputs are announced to other players once received.
+    if (this.ticks[slot] === tick) return false;
     this.ticks[slot] = tick;
     this.turns[slot] = turn;
     if (tick > this.last) { this.last = tick; return true; }
     return false;
+  }
+
+  /** Turns already received for ticks t+1, t+2, ... (stops at the first gap). */
+  upcoming(t, max) {
+    const out = [];
+    for (let k = 1; k <= max; k++) {
+      const slot = (t + k) & (SIZE - 1);
+      if (this.ticks[slot] !== t + k) break;
+      out.push(this.turns[slot]);
+    }
+    return out;
   }
 
   /**

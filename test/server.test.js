@@ -105,9 +105,10 @@ test('input buffer: out of order, duplicates, late and far-future inputs', () =>
   const b = new InputBuffer();
   b.receive(12, 1, 10);
   b.receive(11, -1, 10);
-  b.receive(12, 1, 10);           // duplicate (UDP redundancy)
+  b.receive(12, -1, 10);          // a second copy can't change it (first copy wins)
   b.receive(500, 1, 10);          // nonsense
   assert.equal(b.last, 12);
+  assert.deepEqual(b.upcoming(10, 8), [-1, 1]); // ticks 11, 12 known
   assert.equal(b.take(11), -1);
   assert.equal(b.missing, false);
   assert.equal(b.take(12), 1);
