@@ -219,6 +219,9 @@ net.onJson = (m) => {
       // Let the final crash play out before showing results.
       endTimer = setTimeout(() => showEnd(m), 1200);
       break;
+    case 'stats':
+      diag.server(m);
+      break;
     case 'error':
       toMenu(m.msg || 'Something went wrong');
       break;
@@ -226,6 +229,7 @@ net.onJson = (m) => {
 };
 
 net.onBinary = (buf) => {
+  diag.update();
   if (!game.active) return;
   const d = decodeTick(buf);
   if (d) game.onTick(d);
@@ -260,8 +264,10 @@ let hudAt = 0;
 
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min(250, now - last);
+  const rawDt = now - last;
+  const dt = Math.min(250, rawDt);
   last = now;
+  diag.frame(rawDt);
 
   if (!game.active) {
     renderer.drawIdle(now);
@@ -273,7 +279,9 @@ function frame(now) {
   if (game.controlling) {
     const tickMs = TICK_MS * game.tickScale;
     acc += dt;
-    if (acc > tickMs * 4) acc = tickMs * 4;
+    // After a short freeze, catch up and send the missed inputs (the server has
+    // them queued in order). Only after a long pause (tab hidden) skip ahead.
+    if (acc > tickMs * 15) acc = tickMs * 2;
     while (acc >= tickMs) {
       game.clientTick(input.turn);
       acc -= tickMs;
@@ -335,6 +343,7 @@ function frame(now) {
   if (now - hudAt > 200) {
     hudAt = now;
     updateHud(zone, serverTick);
+    diag.render(now);
   }
 }
 
@@ -354,6 +363,87 @@ function updateHud(zone, serverTick) {
   ui.zoneInfo.textContent = txt;
   ui.zoneInfo.classList.toggle('warn', warn);
 }
+
+// ---------------------------------------------------------------- diagnostics
+// Tap the kills/ping pill (or press N) to show where lag spikes come from:
+// your device (slow frames), the network (gaps between updates) or the server.
+
+const diag = {
+  el: $('net'),
+  on: false,
+  win: { frame: 0, gap: 0, frames: 0 },   // current 2 s window
+  shown: { fps: 0, frame: 0, gap: 0, ping: 0 },
+  lastUpdateAt: 0,
+  srv: { lag: 0, step: 0, maxStep: 0 },
+  spikes: [],                              // recent spikes {at, what, ms}
+  winStart: performance.now(),
+
+  toggle(force) {
+    this.on = force ?? !this.on;
+    show(this.el, this.on);
+    try { localStorage.setItem('cr-net', this.on ? '1' : ''); } catch {}
+  },
+  spike(what, ms, now = performance.now()) {
+    const last = this.spikes[this.spikes.length - 1];
+    if (last && last.what === what && now - last.at < 500) { last.ms = Math.max(last.ms, ms); return; }
+    this.spikes.push({ at: now, what, ms: Math.round(ms) });
+    if (this.spikes.length > 4) this.spikes.shift();
+  },
+  frame(dt) {
+    this.win.frames++;
+    if (dt > this.win.frame) this.win.frame = dt;
+    if (dt > 100 && dt < 2000 && mode === 'game' && !document.hidden) this.spike('device', dt);
+  },
+  update() {
+    const now = performance.now();
+    if (this.lastUpdateAt) {
+      const gap = now - this.lastUpdateAt;
+      if (gap > this.win.gap) this.win.gap = gap;
+      // Normal gap is ~33 ms. A long gap is blamed on the network unless the
+      // server reported a hiccup, or our own device froze, around that time.
+      if (gap > 150 && gap < 5000 && !document.hidden) {
+        setTimeout(() => {
+          const explained = this.spikes.some((s) => s.what !== 'network' && Math.abs(s.at - now) < 2500);
+          if (!explained) this.spike('network', gap, now);
+        }, 2200);
+      }
+    }
+    this.lastUpdateAt = now;
+  },
+  server(m) {
+    this.srv = m;
+    if (m.lag > 80) this.spike('server', m.lag);
+  },
+  render(now) {
+    if (now - this.winStart >= 2000) {
+      const secs = (now - this.winStart) / 1000;
+      this.shown = { fps: Math.round(this.win.frames / secs), frame: Math.round(this.win.frame), gap: Math.round(this.win.gap), ping: Math.round(net.rttMax) };
+      net.rttMax = 0;
+      this.win = { frame: 0, gap: 0, frames: 0 };
+      this.winStart = now;
+    }
+    if (!this.on) return;
+    const c = (v, bad) => `<span class="${v > bad ? 'bad' : 'ok'}">${v}</span>`;
+    const st = game.stats || { late: 0, corrections: 0 };
+    const sh = this.shown;
+    const pingMax = sh.ping || 0;
+    let out =
+      `<b>Device </b> ${sh.fps} fps, slowest frame ${c(sh.frame, 100)} ms\n` +
+      `<b>Network</b> ping ${Math.round(net.rtt)} ms (worst ${c(pingMax, 150)}), update gap ${c(sh.gap, 150)} ms\n` +
+      `<b>Server </b> hiccup ${c(this.srv.lag, 80)} ms, tick ${this.srv.step} ms (worst ${this.srv.maxStep})\n` +
+      `<b>You    </b> late inputs ${st.late}, corrections ${st.corrections}, buffer ${game.pending ? game.pending.length : 0}`;
+    if (this.spikes.length) {
+      out += '\n<b>Recent spikes</b>';
+      for (const s of this.spikes.slice().reverse()) {
+        out += `\n  ${s.what.padEnd(7)} ${String(s.ms).padStart(4)} ms, ${Math.round((now - s.at) / 1000)}s ago`;
+      }
+    }
+    this.el.innerHTML = out;
+  },
+};
+ui.kills.addEventListener('click', () => diag.toggle());
+addEventListener('keydown', (e) => { if (e.code === 'KeyN' && !(e.target instanceof HTMLInputElement)) diag.toggle(); });
+try { if (localStorage.getItem('cr-net') || new URLSearchParams(location.search).has('net')) diag.toggle(true); } catch {}
 
 if (new URLSearchParams(location.search).has('debug')) window.__cr = { game, net, input };
 

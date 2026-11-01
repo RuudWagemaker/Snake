@@ -125,7 +125,7 @@ export class ClientGame {
     this.predStopped = false;
     this.offset = { x: 0, y: 0 };
     this.myDeath = null;
-    this.stats = { reconciles: 0, corrections: 0, maxErr: 0 };
+    this.stats = { reconciles: 0, corrections: 0, maxErr: 0, late: 0 };
 
     // clock + input pacing
     this.clockOffset = null;
@@ -133,7 +133,7 @@ export class ClientGame {
     this.tickScale = 1;
     this.bufHist = [];       // server-side input queue length per tick
     this.starvedAt = -1e9;   // last tick our input arrived too late
-    this.lateHist = [];      // how late each tick message arrived (ticks)
+    this.latePeak = 0;       // recent worst lateness of tick messages (ticks), slowly decaying
     this.interp = MIN_INTERP + 1;
     this.lastRenderNow = 0;
   }
@@ -167,7 +167,10 @@ export class ClientGame {
 
     // Jitter: how late was this message compared to the earliest arrivals?
     // Remote snakes are delayed just enough to cover the worst recent lateness.
-    pushWindow(this.lateHist, Math.max(0, this.clockOffset - sample));
+    // The peak fades with a ~10 s half-life, so occasional spikes (e.g. every
+    // few seconds) are remembered and don't cause a stutter each time.
+    const late = Math.max(0, this.clockOffset - sample);
+    this.latePeak = Math.max(late, this.latePeak * 0.9977);
 
     // Input pacing. The server tells us how many of our inputs are queued and
     // whether it ran out this tick. Keep the smallest queue over the last few
@@ -176,7 +179,7 @@ export class ClientGame {
     this.bufferedAvg = this.bufferedAvg * 0.9 + d.buffered * 0.1;
     if (this.controlling) {
       // Ignore the first second: the server starts before our first input can arrive.
-      if (d.starved && d.tick > 30) this.starvedAt = d.tick;
+      if (d.starved && d.tick > 30) { this.starvedAt = d.tick; this.stats.late++; }
       pushWindow(this.bufHist, d.buffered);
       const minBuf = Math.min(...this.bufHist);
       const sinceStarved = d.tick - this.starvedAt;
@@ -278,8 +281,7 @@ export class ClientGame {
     // Ease the interpolation delay toward what the measured jitter needs.
     const dt = Math.min(100, Math.max(0, now - this.lastRenderNow));
     this.lastRenderNow = now;
-    const worst = this.lateHist.length ? Math.max(...this.lateHist) : 0;
-    const target = Math.min(MAX_INTERP, Math.max(MIN_INTERP, 1 + worst * 1.1));
+    const target = Math.min(MAX_INTERP, Math.max(MIN_INTERP, 1 + this.latePeak * 1.1));
     // Grow fast (avoid stutter), shrink slowly (avoid visible speed changes).
     const rate = target > this.interp ? 1 / 300 : 1 / 3000;
     this.interp += (target - this.interp) * Math.min(1, dt * rate);

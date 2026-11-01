@@ -28,11 +28,23 @@ npm install
 npm start            # http://localhost:3000
 ```
 
-Test with a bad network (one-way delay plus random jitter):
+Test with a bad network (one-way delay plus random jitter), or a server that
+freezes for a moment every 4 s (like a CPU-starved host):
 
 ```bash
 SIM_LAG_MS=75 SIM_JITTER_MS=40 npm start
+SIM_STALL_MS=150 npm start
 ```
+
+### Diagnosing lag
+
+In a match, tap the kills/ping pill (or press `N`) to open the diagnostics panel.
+It shows frame times, network update gaps, server hiccups and prediction corrections,
+and labels each recent spike as **device**, **network** or **server**.
+
+The server also logs `[hiccup] game loop ran N ms late` when it falls behind. On
+Render you'll find this under the service's **Logs**. Frequent hiccups mean the host
+is short on CPU.
 
 Add `?debug` to the URL to expose `window.__cr` (game state, netcode stats) in the console.
 

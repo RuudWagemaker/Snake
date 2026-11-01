@@ -10,6 +10,8 @@ const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
 // direction, SIM_JITTER_MS adds random extra delay (order is preserved, like TCP).
 const SIM_LAG_MS = Number(process.env.SIM_LAG_MS) || 0;
 const SIM_JITTER_MS = Number(process.env.SIM_JITTER_MS) || 0;
+// SIM_STALL_MS freezes the whole server for that long every 4 s, like a CPU-starved host.
+const SIM_STALL_MS = Number(process.env.SIM_STALL_MS) || 0;
 function makeDelayer() {
   if (!SIM_LAG_MS && !SIM_JITTER_MS) return null;
   // Strict FIFO with one timer, so messages are never reordered (TCP never does).
@@ -116,6 +118,12 @@ export class GameServer {
     this.nextRoomId = 1;
     this.timer = null;
     this.heartbeat = null;
+    // Health stats: how late the game loop ran (server hiccups) and tick cost.
+    this.maxLag = 0;
+    this.maxStep = 0;
+    this.stepTotal = 0;
+    this.stepCount = 0;
+    this.lastWarn = 0;
   }
 
   onConnection(ws) {
@@ -147,6 +155,7 @@ export class GameServer {
   }
 
   step() {
+    const t0 = performance.now();
     for (const room of this.rooms) {
       try {
         room.step();
@@ -155,6 +164,33 @@ export class GameServer {
         room.abort();
       }
     }
+    const dt = performance.now() - t0;
+    this.stepTotal += dt;
+    this.stepCount++;
+    if (dt > this.maxStep) this.maxStep = dt;
+  }
+
+  /** Every 2 s: tell players how healthy the server is, and log hiccups. */
+  reportStats() {
+    const lag = Math.round(this.maxLag);
+    const stats = {
+      t: 'stats',
+      lag,                                                     // worst loop delay (ms)
+      step: +(this.stepTotal / Math.max(1, this.stepCount)).toFixed(2), // avg tick cost (ms)
+      maxStep: +this.maxStep.toFixed(1),
+      rooms: this.rooms.size,
+      online: this.clients.size,
+    };
+    if (lag > 80 && Date.now() - this.lastWarn > 10000) {
+      this.lastWarn = Date.now();
+      console.warn(`[hiccup] game loop ran ${lag} ms late (avg tick ${stats.step} ms, worst ${stats.maxStep} ms, ` +
+        `${stats.rooms} rooms, ${stats.online} players). If this repeats, the server is short on CPU.`);
+    }
+    for (const c of this.clients) if (c.room) c.send(stats);
+    this.maxLag = 0;
+    this.maxStep = 0;
+    this.stepTotal = 0;
+    this.stepCount = 0;
   }
 
   start() {
@@ -162,6 +198,7 @@ export class GameServer {
     let next = performance.now();
     const loop = () => {
       const now = performance.now();
+      if (now - next > this.maxLag) this.maxLag = now - next;
       let n = 0;
       while (now >= next && n < 5) {
         this.step();
@@ -172,6 +209,13 @@ export class GameServer {
       this.timer = setTimeout(loop, Math.max(0, next - performance.now()));
     };
     loop();
+    this.statsTimer = setInterval(() => this.reportStats(), 2000);
+    if (SIM_STALL_MS) {
+      this.stallTimer = setInterval(() => {
+        const until = performance.now() + SIM_STALL_MS;
+        while (performance.now() < until) { /* busy-wait: block the event loop */ }
+      }, 4000);
+    }
     this.heartbeat = setInterval(() => {
       for (const c of this.clients) {
         if (!c.isAlive) { c.ws.terminate(); continue; }
@@ -184,5 +228,7 @@ export class GameServer {
   stop() {
     clearTimeout(this.timer);
     clearInterval(this.heartbeat);
+    clearInterval(this.statsTimer);
+    clearInterval(this.stallTimer);
   }
 }

@@ -7,6 +7,7 @@ export class Net {
     this.onOpen = () => {};
     this.onClose = () => {};
     this.rtt = 0;
+    this.rttMax = 0;   // worst ping since last read (for the diagnostics panel)
     this._pingTimer = null;
   }
 
@@ -22,7 +23,7 @@ export class Net {
     ws.onopen = () => {
       this.onOpen();
       clearInterval(this._pingTimer);
-      this._pingTimer = setInterval(() => this.send({ t: 'ping', c: performance.now() }), 2000);
+      this._pingTimer = setInterval(() => this.send({ t: 'ping', c: performance.now() }), 1000);
     };
     ws.onmessage = (ev) => {
       if (typeof ev.data === 'string') {
@@ -31,6 +32,7 @@ export class Net {
         if (msg.t === 'pong') {
           const sample = performance.now() - msg.c;
           this.rtt = this.rtt ? this.rtt * 0.7 + sample * 0.3 : sample;
+          this.rttMax = Math.max(this.rttMax, sample);
           return;
         }
         this.onJson(msg);
