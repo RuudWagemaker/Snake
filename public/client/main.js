@@ -378,7 +378,8 @@ const diag = {
   win: { frame: 0, gap: 0, frames: 0 },   // current 2 s window
   shown: { fps: 0, frame: 0, gap: 0, ping: 0 },
   lastUpdateAt: 0,
-  srv: { lag: 0, step: 0, maxStep: 0 },
+  upGapAt: -1e9,
+  srv: { lag: 0, step: 0, maxStep: 0, up: 0 },
   spikes: [],                              // recent spikes {at, what, ms}
   winStart: performance.now(),
 
@@ -407,8 +408,10 @@ const diag = {
       // server reported a hiccup, or our own device froze, around that time.
       if (gap > 150 && gap < 5000 && !document.hidden) {
         setTimeout(() => {
-          const explained = this.spikes.some((s) => s.what !== 'network' && Math.abs(s.at - now) < 2500);
-          if (!explained) this.spike('network', gap, now);
+          const explained = this.spikes.some((s) => !s.what.startsWith('network') && Math.abs(s.at - now) < 2500);
+          // Did the server also stop hearing from us? Then the connection was silent both ways.
+          const both = Math.abs(this.upGapAt - now) < 3000;
+          if (!explained) this.spike(both ? 'network, both ways' : 'network, download', gap, now);
         }, 2200);
       }
     }
@@ -416,6 +419,7 @@ const diag = {
   },
   server(m) {
     this.srv = m;
+    if (m.up > 150) this.upGapAt = performance.now();
     if (m.lag > 80) this.spike('server', m.lag);
   },
   render(now) {
@@ -433,13 +437,14 @@ const diag = {
     const pingMax = sh.ping || 0;
     let out =
       `<b>Device </b> ${sh.fps} fps, slowest frame ${c(sh.frame, 100)} ms\n` +
-      `<b>Network</b> ping ${Math.round(net.rtt)} ms (worst ${c(pingMax, 150)}), update gap ${c(sh.gap, 150)} ms\n` +
+      `<b>Network</b> ping ${Math.round(net.rtt)} ms (worst ${c(pingMax, 150)})\n` +
+      `<b>Gaps   </b> download ${c(sh.gap, 150)} ms, upload ${c(this.srv.up || 0, 150)} ms\n` +
       `<b>Server </b> hiccup ${c(this.srv.lag, 80)} ms, tick ${this.srv.step} ms (worst ${this.srv.maxStep})\n` +
       `<b>You    </b> late inputs ${st.late}, corrections ${st.corrections}, lead ${game.lead ? Math.round(game.lead) : 0} (+${game.margin || 0})`;
     if (this.spikes.length) {
       out += '\n<b>Recent spikes</b>';
       for (const s of this.spikes.slice().reverse()) {
-        out += `\n  ${s.what.padEnd(7)} ${String(s.ms).padStart(4)} ms, ${Math.round((now - s.at) / 1000)}s ago`;
+        out += `\n  ${String(s.ms).padStart(4)} ms ${s.what}, ${Math.round((now - s.at) / 1000)}s ago`;
       }
     }
     this.el.innerHTML = out;

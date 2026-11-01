@@ -115,7 +115,7 @@ server/          Node.js server (matchmaking, rooms, authoritative simulation, b
   again after a few quiet seconds.
 * **Other snakes:** shown slightly in the past and interpolated between server ticks,
   with the delay sized to normal jitter. If updates stop (a network stall), they keep
-  moving along their current curve for up to 0.5 s. Curve Fever snakes are predictable,
+  moving along their current curve for up to 0.8 s. Curve Fever snakes are predictable,
   and their gaps are deterministic, so this usually matches what really happened.
 * State updates are compact binary (14 bytes per snake per tick). Everything else is JSON.
 

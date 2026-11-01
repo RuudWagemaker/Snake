@@ -20,7 +20,7 @@ import { FLAG_GAP, FLAG_DIED, encodeInput } from '../shared/protocol.js';
 
 const MIN_INTERP = 2;       // remote snakes are shown at least this many ticks in the past
 const MAX_INTERP = 6;       // bigger gaps are bridged by extrapolation instead
-const MAX_EXTRAP = 15;      // keep other snakes moving for up to 0.5 s without updates
+const MAX_EXTRAP = 24;      // keep other snakes moving for up to 0.8 s without updates
 const MAX_PENDING = 120;
 const WINDOW = 150;         // ticks of history used to measure jitter (5 s)
 const MIN_LEAD_MARGIN = 1;
@@ -144,7 +144,9 @@ export class ClientGame {
     this.lead = null;         // smoothed lead actually used (ticks)
     this.slackHist = [];
     this.starvedAt = -1e9;
+    this.starveRun = 0;       // consecutive ticks our input was missing
     this.marginChangedAt = -1e9;
+    this.offsetTau = 120;     // ms to blend out the current correction
     this.lateHist = [];
     this.interpTarget = MIN_INTERP + 1;
     this.interp = MIN_INTERP + 1;
@@ -201,8 +203,10 @@ export class ClientGame {
   /**
    * Input lead control. The server reports the newest input tick it has
    * received; "slack" is how many ticks early our inputs arrive. If an input
-   * was missing when its tick ran, add a tick of margin. After 5 quiet seconds
-   * with plenty of slack, take margin away again.
+   * was missing for a tick or a few (jitter), add a tick of margin. A long
+   * blackout (connection silent for a fraction of a second) is ignored: no
+   * sensible margin covers it, extra margin would only add delay. After 5 quiet
+   * seconds with plenty of slack, take margin away again.
    */
   adaptLead(d) {
     if (d.tick <= 30) return; // the first second: our first inputs are still on the way
@@ -211,10 +215,15 @@ export class ClientGame {
     if (d.starved) {
       this.stats.late++;
       this.starvedAt = d.tick;
-      if (d.tick - this.marginChangedAt > 30) {
+      this.starveRun++;
+      return;
+    }
+    if (this.starveRun) {
+      if (this.starveRun <= 4 && d.tick - this.marginChangedAt > 30) {
         this.margin = Math.min(MAX_LEAD_MARGIN, this.margin + 1);
         this.marginChangedAt = d.tick;
       }
+      this.starveRun = 0;
     } else if (d.tick - this.starvedAt > 150 && d.tick - this.marginChangedAt > 60) {
       const minSlack = Math.min(...this.slackHist);
       if (minSlack >= 2.5) {
@@ -328,14 +337,20 @@ export class ClientGame {
     const dx = oldX - this.pred.x, dy = oldY - this.pred.y;
     this.stats.reconciles++;
     if (dx * dx + dy * dy > 0.01) { this.stats.corrections++; this.stats.maxErr = Math.max(this.stats.maxErr, Math.hypot(dx, dy)); }
-    if (dx * dx + dy * dy < 80 * 80) { this.offset.x += dx; this.offset.y += dy; }
-    else { this.offset.x = 0; this.offset.y = 0; }
+    if (dx * dx + dy * dy < 150 * 150) {
+      this.offset.x += dx; this.offset.y += dy;
+      // Small corrections vanish quickly; big ones (after a blackout) glide
+      // over up to ~0.4 s so the snake never visibly jumps.
+      const size = Math.hypot(this.offset.x, this.offset.y);
+      this.offsetTau = Math.min(400, Math.max(this.offsetTau, 100 + size * 6));
+    } else { this.offset.x = 0; this.offset.y = 0; }
   }
 
   decayOffset(dtMs) {
-    const k = Math.exp(-dtMs / 120);
+    const k = Math.exp(-dtMs / this.offsetTau);
     this.offset.x *= k;
     this.offset.y *= k;
+    if (Math.hypot(this.offset.x, this.offset.y) < 1) this.offsetTau = 120;
   }
 
   // ---- queries for rendering ------------------------------------------------

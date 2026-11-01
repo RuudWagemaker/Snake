@@ -162,6 +162,7 @@ export class Room {
         client.player = p;
         client.queue = [];
         client.lastInput = -1;
+        client.lastInputAt = 0;
       }
     }
 

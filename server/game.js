@@ -57,16 +57,21 @@ class Client {
     this.queue = [];      // pending inputs {tick, turn}, in tick order
     this.lastInput = -1;  // newest input tick received this round
     this.starved = false; // input for the current tick was missing
-    this.isAlive = true;  // heartbeat
+    this.lastMsgAt = performance.now();  // liveness: the client pings every second
+    this.lastInputAt = 0;
+    this.maxInputGap = 0;  // longest gap between inputs in the current stats window (ms)
     this.delayIn = makeDelayer();
     this.delayOut = makeDelayer();
 
     ws.on('message', (data, isBinary) => {
-      const handle = () => (isBinary ? this.onInput(data) : this.onJson(data));
+      const handle = () => {
+        this.lastMsgAt = performance.now();
+        if (isBinary) this.onInput(data);
+        else this.onJson(data);
+      };
       if (this.delayIn) this.delayIn(handle);
       else handle();
     });
-    ws.on('pong', () => { this.isAlive = true; });
     ws.on('close', () => server.onClose(this));
     ws.on('error', () => {});
   }
@@ -77,6 +82,9 @@ class Client {
     if (msg.tick <= this.lastInput) return;                            // duplicate / out of order
     if (msg.tick > this.room.round.tick + MAX_INPUT_AHEAD) return;    // nonsense (or from an old round)
     this.lastInput = msg.tick;
+    const now = performance.now();
+    if (this.lastInputAt) this.maxInputGap = Math.max(this.maxInputGap, now - this.lastInputAt);
+    this.lastInputAt = now;
     this.queue.push(msg);
     if (this.queue.length > MAX_QUEUE) this.queue.shift();
   }
@@ -203,7 +211,12 @@ export class GameServer {
       console.warn(`[hiccup] game loop ran ${lag} ms late (avg tick ${stats.step} ms, worst ${stats.maxStep} ms, ` +
         `${stats.rooms} rooms, ${stats.online} players). If this repeats, the server is short on CPU.`);
     }
-    for (const c of this.clients) if (c.room) c.send(stats);
+    for (const c of this.clients) {
+      if (!c.room) continue;
+      // Personal: longest gap between this player's inputs (upload direction).
+      c.send({ ...stats, up: Math.round(c.maxInputGap) });
+      c.maxInputGap = 0;
+    }
     this.maxLag = 0;
     this.maxStep = 0;
     this.stepTotal = 0;
@@ -233,13 +246,12 @@ export class GameServer {
         while (performance.now() < until) { /* busy-wait: block the event loop */ }
       }, 4000);
     }
+    // Drop connections that have been silent for 20 s. The client sends an
+    // app-level ping every second, so no WebSocket ping frames are needed.
     this.heartbeat = setInterval(() => {
-      for (const c of this.clients) {
-        if (!c.isAlive) { c.ws.terminate(); continue; }
-        c.isAlive = false;
-        c.ws.ping();
-      }
-    }, 15000);
+      const now = performance.now();
+      for (const c of this.clients) if (now - c.lastMsgAt > 20000) c.ws.terminate();
+    }, 5000);
   }
 
   stop() {
