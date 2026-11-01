@@ -87,6 +87,11 @@ class Client {
     if (!msg || typeof msg !== 'object') return;
     switch (msg.t) {
       case 'join':
+        if (msg.build !== this.server.build) {
+          // A page from an older deploy: its input format may not match.
+          this.send({ t: 'error', msg: 'A new version of the game is available. Please refresh the page.', reload: true });
+          return;
+        }
         this.name = cleanName(msg.name);
         this.server.join(this);
         break;
@@ -122,7 +127,8 @@ class Client {
 }
 
 export class GameServer {
-  constructor() {
+  constructor(build = 'dev') {
+    this.build = build;
     this.rooms = new Set();
     this.clients = new Set();
     this.nextClientId = 1;
@@ -140,7 +146,7 @@ export class GameServer {
   onConnection(ws) {
     const c = new Client(ws, this);
     this.clients.add(c);
-    c.send({ t: 'hello', online: this.clients.size });
+    c.send({ t: 'hello', online: this.clients.size, build: this.build });
   }
 
   onClose(c) {

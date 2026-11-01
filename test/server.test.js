@@ -27,8 +27,9 @@ test('server applies tick-stamped inputs exactly as the client predicts', { time
   try {
     const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
     ws.binaryType = 'arraybuffer';
-    await new Promise((r) => ws.once('open', r));
-    ws.send(JSON.stringify({ t: 'join', name: '<b>Tester</b>' }));
+    const hello = await new Promise((resolve) => ws.once('message', (d) => resolve(JSON.parse(d.toString()))));
+    assert.equal(hello.t, 'hello');
+    ws.send(JSON.stringify({ t: 'join', name: '<b>Tester</b>', build: hello.build }));
 
     const start = await new Promise((resolve) => {
       ws.on('message', function onMsg(data, isBinary) {
@@ -99,6 +100,26 @@ test('late inputs are dropped and never build up a delay', () => {
   // Stale ones were discarded; only the 2 inputs for future ticks remain queued.
   assert.equal(fake.queue.length, 2);
   assert.equal(p.turn, 1);
+});
+
+test('a page from an older deploy is told to reload instead of joining', async () => {
+  const srv = await startServer({ port: 0 });
+  try {
+    const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
+    const hello = await new Promise((resolve) => ws.once('message', (d) => resolve(JSON.parse(d.toString()))));
+    ws.send(JSON.stringify({ t: 'join', name: 'old' })); // old pages send no build
+    const reply = await new Promise((resolve) => ws.once('message', (d) => resolve(JSON.parse(d.toString()))));
+    assert.equal(reply.t, 'error');
+    assert.equal(reply.reload, true);
+    assert.equal(srv.game.rooms.size, 0);
+    // The page itself carries the same build the server announces.
+    const html = await (await fetch(`http://localhost:${srv.port}/`)).text();
+    assert.ok(html.includes(`content="${hello.build}"`));
+    assert.ok(html.includes(`main.js?v=${hello.build}`));
+    ws.close();
+  } finally {
+    await srv.close();
+  }
 });
 
 test('static files are served and paths cannot escape public/', async () => {

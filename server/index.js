@@ -1,5 +1,7 @@
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { readFileSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
@@ -16,6 +18,22 @@ const TYPES = {
   '.json': 'application/json',
   '.webmanifest': 'application/manifest+json',
 };
+
+// A fingerprint of the client files. Every deploy that changes the game gets a
+// new one; pages still running an older version reload themselves.
+function computeBuild(dir) {
+  const h = createHash('sha1');
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else { h.update(e.name); h.update(readFileSync(p)); }
+    }
+  };
+  walk(dir);
+  return h.digest('hex').slice(0, 12);
+}
+export const BUILD = computeBuild(PUBLIC_DIR);
 
 async function serveStatic(req, res) {
   let urlPath;
@@ -36,7 +54,8 @@ async function serveStatic(req, res) {
     return;
   }
   try {
-    const data = await readFile(file);
+    let data = await readFile(file);
+    if (file.endsWith('index.html')) data = data.toString().replaceAll('%BUILD%', BUILD);
     res.writeHead(200, {
       'content-type': TYPES[path.extname(file)] || 'application/octet-stream',
       'cache-control': 'no-cache',
@@ -50,7 +69,7 @@ async function serveStatic(req, res) {
 export function startServer({ port = 3000, host } = {}) {
   const server = http.createServer(serveStatic);
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096, perMessageDeflate: false });
-  const game = new GameServer();
+  const game = new GameServer(BUILD);
   wss.on('connection', (ws) => game.onConnection(ws));
   game.start();
   return new Promise((resolve) => {
@@ -72,6 +91,6 @@ export function startServer({ port = 3000, host } = {}) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT) || 3000;
   startServer({ port }).then(({ port }) => {
-    console.log(`Curve Royale running on http://localhost:${port}`);
+    console.log(`Curve Royale (build ${BUILD}) running on http://localhost:${port}`);
   });
 }

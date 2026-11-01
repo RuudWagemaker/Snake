@@ -17,6 +17,21 @@ const ui = {
   center: $('center-msg'), touchL: $('touch-left'), touchR: $('touch-right'),
 };
 
+// Build fingerprint the server put into index.html; used to detect a stale page.
+const BUILD = document.querySelector('meta[name="build"]')?.content || '';
+
+/** The server runs a newer version than this page: reload (but never in a loop). */
+function reloadForNewVersion() {
+  let last = 0;
+  try { last = Number(sessionStorage.getItem('cr-reload-at')) || 0; } catch {}
+  if (Date.now() - last > 30000) {
+    try { sessionStorage.setItem('cr-reload-at', String(Date.now())); } catch {}
+    location.reload();
+    return true;
+  }
+  return false;
+}
+
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const net = new Net();
 const input = new Input(canvas);
@@ -90,7 +105,7 @@ function join() {
   show(ui.lobby);
   ui.lobbyText.textContent = 'Finding a match…';
   ui.lobbySub.textContent = '';
-  net.send({ t: 'join', name });
+  net.send({ t: 'join', name, build: BUILD });
   goFullscreen();
   keepAwake();
 }
@@ -177,6 +192,7 @@ net.onClose = () => {
 net.onJson = (m) => {
   switch (m.t) {
     case 'hello':
+      if (m.build && BUILD && m.build !== BUILD && reloadForNewVersion()) return;
       ui.status.textContent = m.online > 1 ? `${m.online} players online` : '';
       break;
     case 'lobby':
@@ -223,6 +239,7 @@ net.onJson = (m) => {
       diag.server(m);
       break;
     case 'error':
+      if (m.reload && reloadForNewVersion()) return;
       toMenu(m.msg || 'Something went wrong');
       break;
   }
