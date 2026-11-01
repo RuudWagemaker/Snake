@@ -1,0 +1,12 @@
+#cloud-config
+# Paste this into "Cloud config" / "User data" when creating the VPS.
+# It installs everything and starts the game; the site is ready a few minutes
+# after the server boots, at https://<your-ip-with-dashes>.sslip.io
+package_update: true
+packages:
+  - git
+  - ufw
+  - curl
+runcmd:
+  - git clone --branch ccr-1fdf5c16-pynhys https://github.com/ruudwagemaker/snake.git /opt/curve-royale
+  - bash /opt/curve-royale/deploy/setup.sh > /var/log/curve-royale-setup.log 2>&1

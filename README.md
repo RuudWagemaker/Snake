@@ -35,6 +35,8 @@ freezes for a moment every 4 s (like a CPU-starved host):
 SIM_LAG_MS=75 SIM_JITTER_MS=40 npm start
 SIM_STALL_MS=150 npm start
 SIM_SPIKE_MS=550 SIM_SPIKE_EVERY_MS=15000 npm start   # connection goes silent now and then
+SIM_TCP_RTO=1 SIM_SPIKE_MS=300 npm start            # ...with TCP's re-send backoff
+RTC_PORT=40000 SIM_UDP_LOSS=0.05 npm start          # WebRTC on, 5% UDP packet loss
 ```
 
 ### Diagnosing lag
@@ -53,34 +55,59 @@ Run the tests: `npm test`
 
 ## Deploy
 
-### Render (free, easiest)
+### VPS (recommended: fastest on Wi-Fi)
 
-The repo includes a `render.yaml` blueprint.
+On a VPS the game also sends updates over UDP (WebRTC), which rides out Wi-Fi
+blips much better than WebSocket alone. Any small Ubuntu VPS works. These steps use
+Hetzner (Germany, cheap):
 
-The service runs in Frankfurt (`region` in `render.yaml`). Pick the region closest
-to your players, because ping matters a lot in this game. Render can't move an existing
-service, so changing it means deleting the service and creating it again.
+1. Create a server: **Ubuntu 24.04**, the cheapest **x86** type, a location close to
+   your players, and **public IPv4** switched on.
+2. Under **Cloud config**, paste the contents of [`deploy/cloud-init.yaml`](deploy/cloud-init.yaml).
+3. Create it, and wait about 5 minutes. The game is then live at
+   `https://<server-ip-with-dashes>.sslip.io`. For example, IP `116.203.12.34` becomes
+   `https://116-203-12-34.sslip.io`.
+
+What the setup does (`deploy/setup.sh`):
+- installs Docker
+- opens the firewall for SSH, HTTP(S) and UDP port 40000
+- starts the game behind [Caddy](https://caddyserver.com), which gets a free HTTPS
+  certificate automatically
+- checks GitHub every 5 minutes and redeploys when the branch changes
+
+On an existing server, run instead:
+
+```bash
+git clone --branch <branch> https://github.com/ruudwagemaker/snake.git /opt/curve-royale
+sudo bash /opt/curve-royale/deploy/setup.sh
+```
+
+To use your own domain, point its DNS (an A record) at the server and put
+`DOMAIN=your.domain` in `/opt/curve-royale/deploy/.env`. Then run
+`deploy/update.sh --force`.
+
+Logs: `docker compose -f /opt/curve-royale/deploy/docker-compose.yml logs -f game`.
+
+### Render (free, WebSocket only)
+
+Render has no UDP, so the game runs WebSocket-only there. That's fine on a good
+connection. The repo includes a `render.yaml` blueprint, set to Frankfurt.
 
 1. Sign in at [dashboard.render.com](https://dashboard.render.com) with GitHub.
 2. **New > Blueprint**, pick this repository, then **Apply**.
-3. After a couple of minutes the game is live at `https://curve-royale-xxxx.onrender.com`.
 
-Every push to the branch redeploys automatically. The free plan sleeps after 15
-minutes without visitors, and the first visit after that takes about a minute to wake it.
-A paid instance stays awake.
+Every push redeploys automatically. The free plan sleeps after 15 minutes without
+visitors.
 
-### Anywhere else
+### Configuration
 
-It's one Node.js process serving both the website and the WebSocket (`/ws`), so any
-host that runs Node or Docker works (Fly.io, Render, Railway, a VPS, ...).
+| Variable | Meaning |
+| --- | --- |
+| `PORT` | HTTP/WebSocket port (default 3000) |
+| `HOST` | Address to listen on (default: all) |
+| `RTC_PORT` | UDP port for WebRTC. Unset means WebSocket only. Needs the optional `node-datachannel` package |
+| `RTC_PUBLIC_IP` | Public IP to announce, if the server's network card has a private IP (1:1 NAT) |
 
-```bash
-docker build -t curve-royale .
-docker run -p 3000:3000 curve-royale
-```
-
-The server reads `PORT` from the environment. Use HTTPS in production: the client
-automatically connects with `wss://` when the page is served over `https://`.
 Health check: `GET /healthz`.
 
 ## How it works
@@ -117,6 +144,14 @@ server/          Node.js server (matchmaking, rooms, authoritative simulation, b
   with the delay sized to normal jitter. If updates stop (a network stall), they keep
   moving along their current curve for up to 0.8 s. Curve Fever snakes are predictable,
   and their gaps are deterministic, so this usually matches what really happened.
+* **UDP when possible:** if the server has `RTC_PORT` set, the browser also opens a
+  WebRTC data channel (unordered, no re-sends). State goes out over both UDP and
+  WebSocket, and the client uses whichever copy arrives first. Inputs also go over
+  both, and every UDP packet repeats the last 12 inputs. A Wi-Fi blip then only
+  loses the UDP packets sent during it. Over TCP, everything would also wait for
+  re-send timers, which typically doubles the stall. Ticks that UDP lost are estimated
+  right away and replaced by the real data when the WebSocket copy arrives. If UDP is
+  blocked, the game quietly stays on WebSocket.
 * State updates are compact binary (14 bytes per snake per tick). Everything else is JSON.
 
 ### Match flow

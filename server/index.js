@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { GameServer } from './game.js';
+import { initRtc } from './rtc.js';
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public');
 
@@ -66,7 +67,8 @@ async function serveStatic(req, res) {
   }
 }
 
-export function startServer({ port = 3000, host } = {}) {
+export async function startServer({ port = 3000, host } = {}) {
+  await initRtc();
   const server = http.createServer(serveStatic);
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096, perMessageDeflate: false });
   const game = new GameServer(BUILD);
@@ -90,7 +92,7 @@ export function startServer({ port = 3000, host } = {}) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT) || 3000;
-  startServer({ port }).then(({ port }) => {
+  startServer({ port, host: process.env.HOST || undefined }).then(({ port }) => {
     console.log(`Curve Royale (build ${BUILD}) running on http://localhost:${port}`);
   });
 }

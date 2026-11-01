@@ -1,0 +1,6 @@
+# Automatic HTTPS (Let's Encrypt) for $DOMAIN, proxying the website and the
+# WebSocket to the game server.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy 127.0.0.1:3000
+}

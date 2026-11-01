@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, mulberry32 } from '../public/shared/sim.js';
-import { encodeInput, decodeInput, encodeTickBody, writeTickHeader, decodeTick } from '../public/shared/protocol.js';
+import { encodeInput, decodeInput, encodeInputs, decodeInputList, encodeTickBody, writeTickHeader, decodeTick } from '../public/shared/protocol.js';
 import { SPEED, DT, GAP_LEN_TICKS, KILLER_ZONE, fieldRadius } from '../public/shared/constants.js';
 
 test('stepSnake moves at constant speed and keeps float32 state', () => {
@@ -70,6 +70,13 @@ test('binary protocol round trip', () => {
   assert.equal(d.entries[1].id, 9);
   writeTickHeader(body, 778, 779, true);
   assert.equal(decodeTick(body.buffer).starved, true);
+});
+
+test('redundant UDP input packets decode to consecutive ticks', () => {
+  const list = decodeInputList(new Uint8Array(encodeInputs(100, [1, 0, -1])));
+  assert.deepEqual(list, [{ tick: 98, turn: 1 }, { tick: 99, turn: 0 }, { tick: 100, turn: -1 }]);
+  assert.deepEqual(decodeInputList(new Uint8Array(encodeInput(7, 1))), [{ tick: 7, turn: 1 }]);
+  assert.equal(decodeInputList(new Uint8Array([3, 0, 0, 0, 1, 5, 0])), null); // length mismatch
 });
 
 test('rng is deterministic', () => {

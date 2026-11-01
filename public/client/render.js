@@ -1,7 +1,7 @@
 import { LINE_WIDTH } from '../shared/constants.js';
 import { FLAG_GAP } from '../shared/protocol.js';
+import { CHUNK } from './game.js';
 
-const CHUNK = 64;          // trail points per cached Path2D
 const TAU = Math.PI * 2;
 
 function buildChunk(s, i0, i1) {
@@ -124,7 +124,8 @@ export class Renderer {
           }
         }
         const dead = sn.deathTick <= rt;
-        this.drawTrail(sn, limit, extra, v, dead ? (sn.dimColor ||= dim(sn.color)) : sn.color);
+        if (extra && (sn.vox || sn.voy)) for (const p of extra) { p.x += sn.vox; p.y += sn.voy; }
+        this.drawTrail(sn, limit, extra, v, dead ? (sn.dimColor ||= dim(sn.color)) : sn.color, sn.vox || sn.voy ? sn : null);
       }
     }
     // Outside the zone
@@ -161,7 +162,7 @@ export class Renderer {
         alive = sn.deathTick > rt;
         const p = alive && rt > sn.lastTick && sn.exHead ? sn.exHead : sn.headAt(alive ? rt : sn.lastTick, this.tmp);
         sn.exHead = null;
-        hx = p.x; hy = p.y; ha = p.a;
+        hx = p.x + sn.vox; hy = p.y + sn.voy; ha = p.a;
       }
       if (hx < v.x0 - 100 || hx > v.x1 + 100 || hy < v.y0 - 100 || hy > v.y1 + 100) {
         if (!alive && !sn.burstAt) sn.burstAt = f.now; // don't replay old bursts later
@@ -229,7 +230,8 @@ export class Renderer {
     return out;
   }
 
-  drawTrail(sn, limit, extra, v, color) {
+  /** `glide`: a snake whose newest points get its visual offset (fading along the tail). */
+  drawTrail(sn, limit, extra, v, color, glide = null) {
     const ctx = this.ctx;
     ctx.strokeStyle = color;
     const full = Math.floor(limit / CHUNK);
@@ -244,8 +246,13 @@ export class Renderer {
     let prevSolid = false;
     for (let i = i0; i <= limit; i++) {
       const solid = !(sn.fl[i] & FLAG_GAP);
-      if (i > i0 && solid && prevSolid) ctx.lineTo(sn.xs[i], sn.ys[i]);
-      else ctx.moveTo(sn.xs[i], sn.ys[i]);
+      let x = sn.xs[i], y = sn.ys[i];
+      if (glide && limit - i < 8) {
+        const w = 1 - (limit - i) / 8;
+        x += glide.vox * w; y += glide.voy * w;
+      }
+      if (i > i0 && solid && prevSolid) ctx.lineTo(x, y);
+      else ctx.moveTo(x, y);
       prevSolid = solid;
     }
     if (extra) {

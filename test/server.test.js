@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import WebSocket from 'ws';
 import { startServer } from '../server/index.js';
 import { Room } from '../server/room.js';
+import { InputBuffer } from '../server/inputs.js';
 import { stepSnake } from '../public/shared/sim.js';
 import { encodeInput, decodeTick, FLAG_DIED } from '../public/shared/protocol.js';
 import { TICK_RATE } from '../public/shared/constants.js';
@@ -10,7 +11,7 @@ import { TICK_RATE } from '../public/shared/constants.js';
 test('a bot-filled round always ends with a ranking', () => {
   const server = { clients: new Set(), removeRoom() {} };
   const sent = [];
-  const fake = { ws: { readyState: 1 }, name: 'me', queue: [], lastInput: -1, send() {}, sendBinary() {}, sendRaw: (s) => sent.push(s) };
+  const fake = { ws: { readyState: 1 }, name: 'me', inputs: new InputBuffer(), send() {}, sendBinary() {}, sendRaw: (s) => sent.push(s) };
   const room = new Room(server, 1);
   room.addClient(fake);
   let ticks = 0;
@@ -84,22 +85,37 @@ test('server applies tick-stamped inputs exactly as the client predicts', { time
 
 test('late inputs are dropped and never build up a delay', () => {
   const server = { clients: new Set(), removeRoom() {} };
-  const fake = { ws: { readyState: 1 }, name: 'me', queue: [], lastInput: -1, send() {}, sendBinary() {}, sendRaw() {} };
+  const fake = { ws: { readyState: 1 }, name: 'me', inputs: new InputBuffer(), send() {}, sendBinary() {}, sendRaw() {} };
   const room = new Room(server, 1);
   room.addClient(fake);
   while (room.state !== 'playing') room.step();
   const r = room.round;
   const p = fake.player;
-  // Network stall: the inputs for the next 20 ticks are missing...
+  // Network stall: no inputs for 20 ticks...
   for (let i = 0; i < 20; i++) room.step();
-  assert.equal(fake.queue.length, 0);
   // ...then they all arrive at once, plus fresh ones for upcoming ticks.
   const now = r.tick;
-  for (let t = now - 19; t <= now + 3; t++) fake.queue.push({ tick: t, turn: t > now ? 1 : -1 });
+  for (let t = now - 19; t <= now + 3; t++) fake.inputs.receive(t, t > now ? 1 : -1, now);
   room.step();
-  // Stale ones were discarded; only the 2 inputs for future ticks remain queued.
-  assert.equal(fake.queue.length, 2);
-  assert.equal(p.turn, 1);
+  assert.equal(p.turn, 1, 'the input for this tick is used');
+  assert.equal(fake.inputs.applied, now + 1);
+});
+
+test('input buffer: out of order, duplicates, late and far-future inputs', () => {
+  const b = new InputBuffer();
+  b.receive(12, 1, 10);
+  b.receive(11, -1, 10);
+  b.receive(12, 1, 10);           // duplicate (UDP redundancy)
+  b.receive(500, 1, 10);          // nonsense
+  assert.equal(b.last, 12);
+  assert.equal(b.take(11), -1);
+  assert.equal(b.missing, false);
+  assert.equal(b.take(12), 1);
+  assert.equal(b.take(13), null);  // missing: keep previous turn
+  assert.equal(b.missing, true);
+  b.receive(13, -1, 13);          // arrives after tick 13 ran
+  assert.equal(b.take(14), -1);    // ...becomes the latest intent
+  assert.equal(b.missing, true);
 });
 
 test('a page from an older deploy is told to reload instead of joining', async () => {

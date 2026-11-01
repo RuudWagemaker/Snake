@@ -1,7 +1,8 @@
-FROM node:22-alpine
+# Debian (glibc) so the prebuilt WebRTC library (node-datachannel) works.
+FROM node:22-bookworm-slim
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && npm cache clean --force
 COPY server ./server
 COPY public ./public
 ENV PORT=3000

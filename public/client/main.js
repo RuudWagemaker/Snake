@@ -193,6 +193,7 @@ net.onJson = (m) => {
   switch (m.t) {
     case 'hello':
       if (m.build && BUILD && m.build !== BUILD && reloadForNewVersion()) return;
+      if (m.rtc) net.startRtc();
       ui.status.textContent = m.online > 1 ? `${m.online} players online` : '';
       break;
     case 'lobby':
@@ -245,11 +246,10 @@ net.onJson = (m) => {
   }
 };
 
-net.onBinary = (buf) => {
-  diag.update();
+net.onBinary = (buf, via) => {
   if (!game.active) return;
   const d = decodeTick(buf);
-  if (d) game.onTick(d);
+  if (d && game.onTick(d, via)) diag.update();
 };
 
 function showEnd(m) {
@@ -291,7 +291,7 @@ function frame(now) {
   }
 
   input.pollGamepads();
-  game.generateInputs(now, input.turn, net.rtt);
+  game.generateInputs(now, input.turn, net.rttMedian);
   game.decayOffset(dt);
 
   const renderTick = game.renderTick(now);
@@ -437,10 +437,11 @@ const diag = {
     const pingMax = sh.ping || 0;
     let out =
       `<b>Device </b> ${sh.fps} fps, slowest frame ${c(sh.frame, 100)} ms\n` +
-      `<b>Network</b> ping ${Math.round(net.rtt)} ms (worst ${c(pingMax, 150)})\n` +
+      `<b>Network</b> ${net.udpOpen ? 'UDP' : 'WebSocket'}, ping ${Math.round(net.rtt)} ms (worst ${c(pingMax, 150)})\n` +
       `<b>Gaps   </b> download ${c(sh.gap, 150)} ms, upload ${c(this.srv.up || 0, 150)} ms\n` +
       `<b>Server </b> hiccup ${c(this.srv.lag, 80)} ms, tick ${this.srv.step} ms (worst ${this.srv.maxStep})\n` +
-      `<b>You    </b> late inputs ${st.late}, corrections ${st.corrections}, lead ${game.lead ? Math.round(game.lead) : 0} (+${game.margin || 0})`;
+      `<b>You    </b> late inputs ${st.late}, corrections ${st.corrections}, lead ${game.lead ? Math.round(game.lead) : 0} (+${game.margin || 0})` +
+      (net.udpOpen ? `\n<b>UDP    </b> ${Math.round(100 * st.viaUdp / Math.max(1, st.viaUdp + st.viaWs))}% of updates first via UDP, ${st.filled} filled in` : '');
     if (this.spikes.length) {
       out += '\n<b>Recent spikes</b>';
       for (const s of this.spikes.slice().reverse()) {

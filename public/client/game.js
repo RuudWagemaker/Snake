@@ -16,13 +16,15 @@
 //    (extrapolation) instead of freezing.
 import { TICK_MS, TURN_RATE, DT } from '../shared/constants.js';
 import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit } from '../shared/sim.js';
-import { FLAG_GAP, FLAG_DIED, encodeInput } from '../shared/protocol.js';
+import { FLAG_GAP, FLAG_DIED, encodeInput, encodeInputs } from '../shared/protocol.js';
 
 const MIN_INTERP = 2;       // remote snakes are shown at least this many ticks in the past
 const MAX_INTERP = 6;       // bigger gaps are bridged by extrapolation instead
 const MAX_EXTRAP = 24;      // keep other snakes moving for up to 0.8 s without updates
 const MAX_PENDING = 120;
 const WINDOW = 150;         // ticks of history used to measure jitter (5 s)
+export const CHUNK = 64;    // trail points per cached Path2D (renderer)
+const UDP_REDUNDANCY = 12;  // each UDP input packet repeats this many recent inputs
 const MIN_LEAD_MARGIN = 1;
 const MAX_LEAD_MARGIN = 6;
 
@@ -37,6 +39,7 @@ export class Snake {
     this.ys = new Float32Array(this.cap);
     this.as = new Float32Array(this.cap);
     this.fl = new Uint8Array(this.cap);
+    this.prov = new Uint8Array(this.cap); // 1 = estimated point, real data still on its way
     this.n = 0;
     this.firstTick = 0;
     this.alive = true;
@@ -46,24 +49,15 @@ export class Snake {
     this.kills = 0;
     this.chunks = [];      // cached Path2D pieces, owned by the renderer
     this.burstAt = 0;      // when the death effect started (ms)
+    this.vox = 0;          // visual offset after extrapolation was corrected (glides to 0)
+    this.voy = 0;
   }
 
   get lastTick() { return this.firstTick + this.n - 1; }
 
-  push(tick, x, y, a, f) {
+  /** Append the point for the next tick (ticks are contiguous). */
+  append(tick, x, y, a, f, prov = 0) {
     if (this.n === 0) this.firstTick = tick;
-    else {
-      if (tick <= this.lastTick) return false;
-      while (this.lastTick < tick - 1) {
-        const i = this.n - 1;
-        this._append(this.xs[i], this.ys[i], this.as[i], this.fl[i]);
-      }
-    }
-    this._append(x, y, a, f);
-    return true;
-  }
-
-  _append(x, y, a, f) {
     if (this.n === this.cap) {
       this.cap *= 2;
       for (const k of ['xs', 'ys', 'as']) {
@@ -71,12 +65,24 @@ export class Snake {
         arr.set(this[k]);
         this[k] = arr;
       }
-      const fl = new Uint8Array(this.cap);
-      fl.set(this.fl);
-      this.fl = fl;
+      for (const k of ['fl', 'prov']) {
+        const arr = new Uint8Array(this.cap);
+        arr.set(this[k]);
+        this[k] = arr;
+      }
     }
     const i = this.n++;
-    this.xs[i] = x; this.ys[i] = y; this.as[i] = a; this.fl[i] = f;
+    this.xs[i] = x; this.ys[i] = y; this.as[i] = a; this.fl[i] = f; this.prov[i] = prov;
+  }
+
+  /** Replace an estimated point with real data. Returns true if it changed something. */
+  fill(i, x, y, a, f) {
+    if (!this.prov[i]) return false;
+    this.xs[i] = x; this.ys[i] = y; this.as[i] = a; this.fl[i] = f; this.prov[i] = 0;
+    // cached trail pieces containing this point must be rebuilt
+    delete this.chunks[Math.floor(i / CHUNK)];
+    if (i % CHUNK === 0 && i > 0) delete this.chunks[i / CHUNK - 1];
+    return true;
   }
 
   /** Interpolated head at fractional tick (clamped to known data). */
@@ -113,7 +119,7 @@ export class ClientGame {
     for (const p of msg.players) {
       const s = new Snake(p);
       s.gaps = new GapSchedule(msg.seed, p.id);
-      s.push(msg.tick, p.x, p.y, p.a, 0);
+      s.append(msg.tick, p.x, p.y, p.a, 0);
       this.snakes.set(p.id, s);
     }
     this.list = [...this.snakes.values()];
@@ -136,7 +142,7 @@ export class ClientGame {
     this.offset = { x: 0, y: 0 };
     this.alpha = 0;
     this.myDeath = null;
-    this.stats = { reconciles: 0, corrections: 0, maxErr: 0, late: 0 };
+    this.stats = { reconciles: 0, corrections: 0, maxErr: 0, late: 0, viaUdp: 0, viaWs: 0, filled: 0 };
 
     // clock, input lead, jitter
     this.clockOffset = null;
@@ -152,20 +158,50 @@ export class ClientGame {
     this.interp = MIN_INTERP + 1;
     this.lastRenderNow = 0;
     this.lastFrameNow = 0;
+    this.lastRt = 0;
   }
 
   // ---- server messages -------------------------------------------------
 
-  onTick(d) {
-    if (d.tick <= this.latestTick) return;
+  /**
+   * A tick message from the server, via UDP or WebSocket (usually both: the
+   * first copy wins). Returns true if it was the newest tick so far.
+   */
+  onTick(d, via = 'ws') {
+    if (d.tick <= this.latestTick) {
+      this.fillLate(d);
+      return false;
+    }
+    if (via === 'udp') this.stats.viaUdp++; else this.stats.viaWs++;
+
+    // Remote snakes we were extrapolating: remember where we showed them, so the
+    // switch to real data can glide instead of jump.
+    const rt = this.lastRt;
+    const shown = [];
+    for (const s of this.list) {
+      if (s !== this.me && s.alive && rt > s.lastTick) {
+        const ex = this.extrapolate(s, rt);
+        if (ex) shown.push([s, ex.head.x, ex.head.y]);
+      }
+    }
+
     let mine = null;
     for (const e of d.entries) {
       const s = this.snakes.get(e.id);
-      if (!s || !s.push(d.tick, e.x, e.y, e.a, e.flags)) continue;
-      const i = s.n - 1;
-      if (d.tick > this.playTick && i > 0 && !(s.fl[i] & FLAG_GAP) && !(s.fl[i - 1] & FLAG_GAP)) {
-        this.grid.add(s.xs[i - 1], s.ys[i - 1], s.xs[i], s.ys[i], s.id, d.tick);
+      if (!s || d.tick <= s.lastTick) continue;
+      // Ticks that UDP lost: estimate them now; the WebSocket copy fixes them soon.
+      const gap = d.tick - s.lastTick;
+      for (let k = 1; k < gap; k++) {
+        const i = s.n - 1, f = 1 / (gap - k + 1);
+        const t = s.lastTick + 1;
+        let da = e.a - s.as[i];
+        if (da > Math.PI) da -= Math.PI * 2; else if (da < -Math.PI) da += Math.PI * 2;
+        const fl = t > this.playTick && s.gaps.isGap(t - this.playTick) ? FLAG_GAP : 0;
+        s.append(t, s.xs[i] + (e.x - s.xs[i]) * f, s.ys[i] + (e.y - s.ys[i]) * f, s.as[i] + da * f, fl, 1);
+        this.addSegment(s, t);
       }
+      s.append(d.tick, e.x, e.y, e.a, e.flags);
+      this.addSegment(s, d.tick);
       if (e.flags & FLAG_DIED) {
         s.alive = false;
         s.deathTick = d.tick;
@@ -173,6 +209,13 @@ export class ClientGame {
       if (e.id === this.myId) mine = e;
     }
     this.latestTick = d.tick;
+
+    for (const [s, x, y] of shown) {
+      const real = rt <= s.lastTick ? s.headAt(rt, { x: 0, y: 0, a: 0 }) : this.extrapolate(s, rt)?.head;
+      if (!real) continue;
+      const dx = x - real.x, dy = y - real.y;
+      if (dx * dx + dy * dy < 100 * 100) { s.vox += dx; s.voy += dy; }
+    }
 
     // Clock sync: estimate which server tick "now" corresponds to. Biased toward
     // the earliest arrivals so late packets don't drag the estimate around.
@@ -196,6 +239,33 @@ export class ClientGame {
       if (mine) {
         if (mine.flags & FLAG_DIED) this.controlling = false;
         else this.reconcile(mine, d.tick);
+      }
+    }
+    return true;
+  }
+
+  addSegment(s, tick) {
+    const i = s.n - 1;
+    if (tick > this.playTick && i > 0 && !(s.fl[i] & FLAG_GAP) && !(s.fl[i - 1] & FLAG_GAP)) {
+      this.grid.add(s.xs[i - 1], s.ys[i - 1], s.xs[i], s.ys[i], s.id, tick);
+    }
+  }
+
+  /** A copy of an older tick: replace estimated points with the real ones. */
+  fillLate(d) {
+    for (const e of d.entries) {
+      const s = this.snakes.get(e.id);
+      if (!s) continue;
+      const i = d.tick - s.firstTick;
+      if (i === s.n) {
+        // a snake that just died: its final tick only came through this copy
+        s.append(d.tick, e.x, e.y, e.a, e.flags);
+      } else if (i >= 0 && i < s.n && s.fill(i, e.x, e.y, e.a, e.flags)) {
+        this.stats.filled++;
+      }
+      if (e.flags & FLAG_DIED) {
+        s.alive = false;
+        s.deathTick = Math.min(s.deathTick, d.tick);
       }
     }
   }
@@ -283,14 +353,29 @@ export class ClientGame {
       // first input, or the clock jumped (e.g. the tab was asleep): resync
       this.lastTarget = Math.max(this.latestTick, target - 1);
     }
+    let sent = false;
     while (this.lastTarget < target) {
       const t = ++this.lastTarget;
       this.net.sendBinary(encodeInput(t, turn));
       this.pending.push({ tick: t, turn });
       if (this.pending.length > MAX_PENDING) this.pending.shift();
       this.advanceTo(t, turn);
+      sent = true;
     }
+    if (sent) this.sendUdpInputs();
     this.alpha = Math.max(0, Math.min(1, targetF - target));
+  }
+
+  /** Over UDP, every packet repeats the recent inputs: losing one costs nothing. */
+  sendUdpInputs() {
+    const P = this.pending;
+    if (!P.length || !this.net.udpOpen) return;
+    const turns = [];
+    let expect = P[P.length - 1].tick;
+    for (let i = P.length - 1; i >= 0 && turns.length < UDP_REDUNDANCY && P[i].tick === expect; i--, expect--) {
+      turns.unshift(P[i].turn);
+    }
+    this.net.sendUdp(encodeInputs(P[P.length - 1].tick, turns));
   }
 
   /** Tab is going to the background: make sure the server doesn't keep a held turn. */
@@ -351,6 +436,13 @@ export class ClientGame {
     this.offset.x *= k;
     this.offset.y *= k;
     if (Math.hypot(this.offset.x, this.offset.y) < 1) this.offsetTau = 120;
+    const kr = Math.exp(-dtMs / 200);
+    for (const s of this.list) {
+      if (s.vox || s.voy) {
+        s.vox *= kr; s.voy *= kr;
+        if (Math.abs(s.vox) + Math.abs(s.voy) < 0.05) s.vox = s.voy = 0;
+      }
+    }
   }
 
   // ---- queries for rendering ------------------------------------------------
@@ -370,6 +462,7 @@ export class ClientGame {
     let t = this.serverTickNow(now) - this.interp;
     if (t > this.latestTick + MAX_EXTRAP) t = this.latestTick + MAX_EXTRAP;
     if (t < this.latestTick - MAX_INTERP - 3) t = this.latestTick - MAX_INTERP - 3;
+    this.lastRt = t;
     return t;
   }
 

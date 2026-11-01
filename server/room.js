@@ -52,7 +52,7 @@ export class Room {
   addClient(c) {
     c.room = this;
     c.player = null;
-    c.queue = [];
+    c.inputs.reset();
     this.clients.add(c);
     if (this.clients.size === 1) this.timer = LOBBY_TICKS;
     if (this.clients.size >= MAX_PLAYERS) this.timer = Math.min(this.timer, TICK_RATE);
@@ -71,7 +71,7 @@ export class Room {
     }
     c.room = null;
     c.player = null;
-    c.queue = [];
+    c.inputs.reset();
     if (this.clients.size === 0) {
       this.server.removeRoom(this);
     } else if (this.state === 'lobby') {
@@ -160,8 +160,7 @@ export class Room {
       players.push(p);
       if (client) {
         client.player = p;
-        client.queue = [];
-        client.lastInput = -1;
+        client.inputs.reset();
         client.lastInputAt = 0;
       }
     }
@@ -194,13 +193,13 @@ export class Room {
     for (const p of r.players) {
       if (!p.alive) continue;
       if (p.client) {
-        // Each input is stamped with the tick it's for. Inputs for ticks that
-        // already ran are too late: their turn still becomes the latest known
-        // intent, but they can't change the past, so they never pile up.
-        const q = p.client.queue;
-        while (q.length && q[0].tick < t) p.turn = q.shift().turn;
-        if (q.length && q[0].tick === t) p.turn = q.shift().turn;
-        else p.client.starved = true; // missing: keep the previous turn, tell the client
+        // Each input is stamped with the tick it's for. Inputs that arrive after
+        // their tick ran can't change the past (so they never pile up); their
+        // turn just becomes the latest known intent.
+        const inp = p.client.inputs;
+        const turn = inp.take(t);
+        if (turn !== null) p.turn = turn;
+        if (inp.missing) p.client.starved = true; // tell the client
       } else if (moving) {
         p.turn = botThink(p, r, zone, zt, t);
       }
@@ -260,7 +259,6 @@ export class Room {
       const k = r.players[killer - 1];
       if (k) k.kills++;
     }
-    if (p.client) p.client.queue = [];
     this.broadcast({ t: 'death', id: p.id, killer, tick: t, place, alive: r.aliveCount });
   }
 
@@ -278,7 +276,7 @@ export class Room {
     const body = encodeTickBody(entries);
     for (const c of this.clients) {
       const msg = new Uint8Array(body); // copy, header differs per client
-      writeTickHeader(msg, t, c.player ? c.lastInput : 0, c.starved);
+      writeTickHeader(msg, t, c.player ? c.inputs.last : 0, c.starved);
       c.starved = false;
       c.sendBinary(msg);
     }

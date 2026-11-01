@@ -1,0 +1,31 @@
+# Curve Royale on a VPS: the game server plus Caddy for HTTPS.
+# Host networking so WebRTC can use the server's real IP and UDP port directly.
+services:
+  game:
+    build: ..
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      HOST: 127.0.0.1              # only Caddy talks to it
+      PORT: 3000
+      RTC_PORT: ${RTC_PORT:-40000} # UDP port for WebRTC (open it in the firewall)
+      RTC_PUBLIC_IP: ${RTC_PUBLIC_IP:-}
+    logging:
+      options: { max-size: "10m", max-file: "3" }
+
+  caddy:
+    image: caddy:2
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  caddy_data:
+  caddy_config:

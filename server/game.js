@@ -1,10 +1,10 @@
 import { WebSocket } from 'ws';
 import { TICK_MS } from '../public/shared/constants.js';
-import { decodeInput } from '../public/shared/protocol.js';
+import { decodeInputList } from '../public/shared/protocol.js';
 import { Room } from './room.js';
+import { InputBuffer } from './inputs.js';
+import { RtcPeer, rtcEnabled } from './rtc.js';
 
-const MAX_QUEUE = 64;         // max queued inputs per player
-const MAX_INPUT_AHEAD = 90;   // ignore inputs stamped more than 3 s in the future
 const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
 
 // Development aid: simulate a bad network. SIM_LAG_MS is one-way delay in each
@@ -17,10 +17,29 @@ const SIM_SPIKE_MS = Number(process.env.SIM_SPIKE_MS) || 0;
 const SIM_SPIKE_EVERY_MS = Number(process.env.SIM_SPIKE_EVERY_MS) || 15000;
 // SIM_STALL_MS freezes the whole server for that long every 4 s, like a CPU-starved host.
 const SIM_STALL_MS = Number(process.env.SIM_STALL_MS) || 0;
+// SIM_TCP_RTO=1: during a spike, TCP-like retransmission backoff (re-sends at
+// 200, 600, 1400 ms after the first loss), instead of releasing at the end.
+const SIM_TCP_RTO = !!process.env.SIM_TCP_RTO;
+// SIM_UDP_LOSS: fraction of UDP packets dropped at random (both directions).
+const SIM_UDP_LOSS = Number(process.env.SIM_UDP_LOSS) || 0;
+const inSpike = (at) => SIM_SPIKE_MS && at % SIM_SPIKE_EVERY_MS < SIM_SPIKE_MS;
 function spikeRelease(at) {
   if (!SIM_SPIKE_MS) return at;
   const phase = at % SIM_SPIKE_EVERY_MS;
-  return phase < SIM_SPIKE_MS ? at - phase + SIM_SPIKE_MS : at;
+  if (phase >= SIM_SPIKE_MS) return at;
+  const start = at - phase, end = start + SIM_SPIKE_MS;
+  if (!SIM_TCP_RTO) return end;
+  let t = at, rto = 200;
+  while (t < end) { t += rto; rto *= 2; }
+  return t;
+}
+/** UDP: delayed like the TCP path, but packets in a spike (or randomly) are lost, never queued. */
+function udpSim(fn) {
+  if (!SIM_LAG_MS && !SIM_JITTER_MS && !SIM_SPIKE_MS && !SIM_UDP_LOSS) return fn();
+  if (Math.random() < SIM_UDP_LOSS) return;
+  const at = performance.now() + SIM_LAG_MS + Math.random() * SIM_JITTER_MS;
+  if (inSpike(at)) return;
+  setTimeout(fn, at - performance.now());
 }
 function makeDelayer() {
   if (!SIM_LAG_MS && !SIM_JITTER_MS && !SIM_SPIKE_MS) return null;
@@ -54,9 +73,9 @@ class Client {
     this.name = 'Player';
     this.room = null;
     this.player = null;   // current round's player object
-    this.queue = [];      // pending inputs {tick, turn}, in tick order
-    this.lastInput = -1;  // newest input tick received this round
+    this.inputs = new InputBuffer();
     this.starved = false; // input for the current tick was missing
+    this.rtc = null;      // WebRTC peer (UDP), if the browser set one up
     this.lastMsgAt = performance.now();  // liveness: the client pings every second
     this.lastInputAt = 0;
     this.maxInputGap = 0;  // longest gap between inputs in the current stats window (ms)
@@ -72,21 +91,27 @@ class Client {
       if (this.delayIn) this.delayIn(handle);
       else handle();
     });
-    ws.on('close', () => server.onClose(this));
+    ws.on('close', () => { this.rtc?.close(); this.rtc = null; server.onClose(this); });
     ws.on('error', () => {});
   }
 
+  /** Inputs arrive over WebSocket and (if set up) UDP; duplicates are fine. */
   onInput(data) {
-    const msg = decodeInput(data);
-    if (!msg || !this.player || !this.player.alive || !this.room || !this.room.round) return;
-    if (msg.tick <= this.lastInput) return;                            // duplicate / out of order
-    if (msg.tick > this.room.round.tick + MAX_INPUT_AHEAD) return;    // nonsense (or from an old round)
-    this.lastInput = msg.tick;
-    const now = performance.now();
-    if (this.lastInputAt) this.maxInputGap = Math.max(this.maxInputGap, now - this.lastInputAt);
-    this.lastInputAt = now;
-    this.queue.push(msg);
-    if (this.queue.length > MAX_QUEUE) this.queue.shift();
+    const list = decodeInputList(data);
+    if (!list || !this.player || !this.player.alive || !this.room || !this.room.round) return;
+    const cur = this.room.round.tick;
+    let newest = false;
+    for (const m of list) if (this.inputs.receive(m.tick, m.turn, cur)) newest = true;
+    if (newest) {
+      const now = performance.now();
+      if (this.lastInputAt) this.maxInputGap = Math.max(this.maxInputGap, now - this.lastInputAt);
+      this.lastInputAt = now;
+    }
+  }
+
+  onUdp(u8) {
+    this.lastMsgAt = performance.now();
+    udpSim(() => this.onInput(u8));
   }
 
   onJson(data) {
@@ -109,6 +134,14 @@ class Client {
       case 'ping':
         this.send({ t: 'pong', c: msg.c });
         break;
+      case 'rtc':
+        if (!rtcEnabled()) return;
+        if (msg.type === 'offer') {
+          this.rtc?.close();
+          this.rtc = new RtcPeer(this.id, (m) => this.send(m), (u8) => this.onUdp(u8));
+        }
+        this.rtc?.handle(msg);
+        break;
     }
   }
 
@@ -130,6 +163,9 @@ class Client {
       this.ws.terminate(); // hopelessly behind; drop the connection
       return;
     }
+    // Over UDP for speed (lost packets are skipped) and over the WebSocket too,
+    // which guarantees delivery and fills in anything UDP dropped.
+    if (this.rtc && this.rtc.open) udpSim(() => this.rtc && this.rtc.send(u8));
     this.sendRaw(u8);
   }
 }
@@ -154,7 +190,7 @@ export class GameServer {
   onConnection(ws) {
     const c = new Client(ws, this);
     this.clients.add(c);
-    c.send({ t: 'hello', online: this.clients.size, build: this.build });
+    c.send({ t: 'hello', online: this.clients.size, build: this.build, rtc: rtcEnabled() });
   }
 
   onClose(c) {

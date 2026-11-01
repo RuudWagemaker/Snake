@@ -4,6 +4,9 @@
 //   u8 type=1 | u32 tick | i8 turn
 //   `tick` is the server tick this input is for. The server applies it on that
 //   tick and drops it if it arrives too late.
+// INPUTS (client -> server over UDP), 6 + n bytes:
+//   u8 type=3 | u32 lastTick | u8 n | n * i8 turn (for ticks lastTick-n+1 .. lastTick)
+//   Every UDP packet repeats the recent inputs, so a lost packet costs nothing.
 // TICK   (server -> client), 11 + 14*n bytes:
 //   u8 type=2 | u32 tick | u32 lastInput | u8 flags | u8 count | count * entry
 //   lastInput: newest input tick received from this client
@@ -12,6 +15,7 @@
 
 export const MSG_INPUT = 1;
 export const MSG_TICK = 2;
+export const MSG_INPUTS = 3;
 export const FLAG_GAP = 1;
 export const FLAG_DIED = 2;
 export const TICK_HEADER = 11;
@@ -32,6 +36,35 @@ export function decodeInput(u8) {
   if (v.getUint8(0) !== MSG_INPUT) return null;
   const turn = v.getInt8(5);
   return { tick: v.getUint32(1), turn: turn < 0 ? -1 : turn > 0 ? 1 : 0 };
+}
+
+export function encodeInputs(lastTick, turns) {
+  const n = Math.min(255, turns.length);
+  const buf = new ArrayBuffer(6 + n);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG_INPUTS);
+  v.setUint32(1, lastTick);
+  v.setUint8(5, n);
+  for (let i = 0; i < n; i++) v.setInt8(6 + i, turns[turns.length - n + i]);
+  return buf;
+}
+
+/** Decodes either input message type into a list of {tick, turn}. */
+export function decodeInputList(u8) {
+  if (u8.byteLength < 6) return null;
+  const v = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const type = v.getUint8(0);
+  const clamp = (t) => (t < 0 ? -1 : t > 0 ? 1 : 0);
+  if (type === MSG_INPUT) {
+    const one = decodeInput(u8);
+    return one ? [one] : null;
+  }
+  if (type !== MSG_INPUTS) return null;
+  const last = v.getUint32(1), n = v.getUint8(5);
+  if (u8.byteLength !== 6 + n || n === 0 || last < n - 1) return null;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) out[i] = { tick: last - n + 1 + i, turn: clamp(v.getInt8(6 + i)) };
+  return out;
 }
 
 /** Writes the shared per-snake part of a tick message. Returns a Uint8Array. */
