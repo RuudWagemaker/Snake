@@ -164,6 +164,7 @@ export class Renderer {
         sn.exHead = null;
         hx = p.x + sn.vox; hy = p.y + sn.voy; ha = p.a;
       }
+      sn.drawnX = hx; sn.drawnY = hy;
       if (hx < v.x0 - 100 || hx > v.x1 + 100 || hy < v.y0 - 100 || hy > v.y1 + 100) {
         if (!alive && !sn.burstAt) sn.burstAt = f.now; // don't replay old bursts later
         continue;

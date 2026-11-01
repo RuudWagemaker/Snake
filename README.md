@@ -140,10 +140,15 @@ server/          Node.js server (matchmaking, rooms, authoritative simulation, b
   becomes the latest known intent. A network stall therefore can never build up a
   permanent input delay. The margin grows by a tick when an input is late and shrinks
   again after a few quiet seconds.
-* **Other snakes:** shown slightly in the past and interpolated between server ticks,
-  with the delay sized to normal jitter. If updates stop (a network stall), they keep
-  moving along their current curve for up to 0.8 s. Curve Fever snakes are predictable,
-  and their gaps are deterministic, so this usually matches what really happened.
+* **Other snakes:** while you play, they're shown at the same moment as your own
+  (predicted) snake, projected forward along their current curve. Your own snake is
+  shown slightly ahead of the server (to feel instant). If others were shown in the
+  past, you could look "clearly ahead" on screen while really being nose to nose,
+  and both die in a head-on crash. Curve Fever snakes are predictable (constant speed,
+  known turn and gaps), so the projection is usually within a unit or two of the
+  truth, and corrections glide in. While spectating, snakes are shown slightly in the
+  past and interpolated. If updates stop for a moment, snakes keep moving (up to 1 s)
+  instead of freezing.
 * **UDP when possible:** if the server has `RTC_PORT` set, the browser also opens a
   WebRTC data channel (unordered, no re-sends). State goes out over both UDP and
   WebSocket, and the client uses whichever copy arrives first. Inputs also go over

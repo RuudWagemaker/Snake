@@ -11,16 +11,19 @@
 //    away with the shared rules. When the server state for tick T arrives, we
 //    rewind to it and replay our inputs for ticks after T (reconciliation).
 //    Small differences are blended out instead of snapping.
-//  * Other snakes: shown a few ticks in the past and interpolated. If updates
-//    stop for a moment, they keep moving along their current curve
-//    (extrapolation) instead of freezing.
+//  * Other snakes: while you play, they're shown at the same moment as your own
+//    (predicted) snake, projected forward along their current curve. So what
+//    you see matches what the server decides when lines cross. Corrections
+//    glide in. While spectating they're shown slightly in the past and
+//    interpolated (smoothest). Either way, if updates stop for a moment they
+//    keep moving instead of freezing.
 import { TICK_MS, TURN_RATE, DT } from '../shared/constants.js';
 import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit } from '../shared/sim.js';
 import { FLAG_GAP, FLAG_DIED, encodeInput, encodeInputs } from '../shared/protocol.js';
 
 const MIN_INTERP = 2;       // remote snakes are shown at least this many ticks in the past
 const MAX_INTERP = 6;       // bigger gaps are bridged by extrapolation instead
-const MAX_EXTRAP = 24;      // keep other snakes moving for up to 0.8 s without updates
+const MAX_EXTRAP = 30;      // project other snakes up to 1 s past the newest update
 const MAX_PENDING = 120;
 const WINDOW = 150;         // ticks of history used to measure jitter (5 s)
 export const CHUNK = 64;    // trail points per cached Path2D (renderer)
@@ -159,6 +162,7 @@ export class ClientGame {
     this.lastRenderNow = 0;
     this.lastFrameNow = 0;
     this.lastRt = 0;
+    this.shift = 0;           // ticks remote snakes are shown ahead of the interpolation time
   }
 
   // ---- server messages -------------------------------------------------
@@ -459,7 +463,13 @@ export class ClientGame {
     // Grow fast (avoid stutter), shrink slowly (avoid visible speed changes).
     const rate = this.interpTarget > this.interp ? 1 / 500 : 1 / 3000;
     this.interp += (this.interpTarget - this.interp) * Math.min(1, dt * rate);
-    let t = this.serverTickNow(now) - this.interp;
+    // While we control a snake, show the others at the moment our own snake is
+    // shown (lead - 1 ticks ahead of server time), instead of in the past. The
+    // shift eases in and out so nobody visibly jumps or runs backwards.
+    const want = this.controlling && this.lead !== null ? this.lead - 1 + this.interp : 0;
+    const maxStep = 10 * dt / 1000;
+    this.shift += Math.max(-maxStep, Math.min(maxStep, want - this.shift));
+    let t = this.serverTickNow(now) - this.interp + this.shift;
     if (t > this.latestTick + MAX_EXTRAP) t = this.latestTick + MAX_EXTRAP;
     if (t < this.latestTick - MAX_INTERP - 3) t = this.latestTick - MAX_INTERP - 3;
     this.lastRt = t;
@@ -485,11 +495,13 @@ export class ClientGame {
     const pts = [];
     const whole = Math.floor(k);
     const solidAt = (t) => t <= this.playTick || !s.gaps.isGap(t - this.playTick);
+    // One zone lookup: the zone at the end is the strictest (it only shrinks).
+    const zone = zoneAt(this.plan, s.lastTick + whole + 1 - this.playTick);
     for (let j = 1; j <= whole + 1; j++) {
       const t = s.lastTick + j;
       const nx = { x: st.x, y: st.y, a: st.a };
       if (t > this.playTick) stepSnake(nx, turn);
-      if (t > this.playTick && checkHit(this.grid, zoneAt(this.plan, t - this.playTick), nx.x, nx.y, s.id, t) !== null) {
+      if (t > this.playTick && checkHit(this.grid, zone, nx.x, nx.y, s.id, t) !== null) {
         return { pts, head: st };
       }
       if (j > whole) {
