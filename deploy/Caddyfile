@@ -4,3 +4,7 @@
 	encode gzip
 	reverse_proxy 127.0.0.1:3000
 }
+
+# Extra sites that live only on the server, outside this repo (e.g. the deal tracker in
+# /etc/caddy-sites/deals.caddy). No matching files is fine: Caddy just skips the import.
+import /etc/caddy/sites/*.caddy

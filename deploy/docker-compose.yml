@@ -21,6 +21,7 @@ services:
       DOMAIN: ${DOMAIN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /etc/caddy-sites:/etc/caddy/sites:ro   # extra sites kept on the server (see Caddyfile)
       - caddy_data:/data
       - caddy_config:/config
     logging:
