@@ -108,7 +108,7 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && mode !== 'menu') keepAwake();
   // Animation frames stop in background tabs; send "straight" so the server
   // doesn't keep repeating a held turn while we're away.
-  if (document.hidden && game.active && game.controlling) game.clientTick(0);
+  if (document.hidden && game.active && game.controlling) game.goStraight();
 });
 
 // Tap/click while spectating cycles through the surviving snakes.
@@ -259,7 +259,6 @@ function showEnd(m) {
 const myHead = { x: 0, y: 0, a: 0 };
 const spec = { x: 0, y: 0, a: 0 };
 let last = performance.now();
-let acc = 0;
 let hudAt = 0;
 
 function frame(now) {
@@ -275,21 +274,7 @@ function frame(now) {
   }
 
   input.pollGamepads();
-  let alpha = 0;
-  if (game.controlling) {
-    const tickMs = TICK_MS * game.tickScale;
-    acc += dt;
-    // After a short freeze, catch up and send the missed inputs (the server has
-    // them queued in order). Only after a long pause (tab hidden) skip ahead.
-    if (acc > tickMs * 15) acc = tickMs * 2;
-    while (acc >= tickMs) {
-      game.clientTick(input.turn);
-      acc -= tickMs;
-    }
-    alpha = acc / tickMs;
-  } else {
-    acc = 0;
-  }
+  game.generateInputs(now, input.turn, net.rtt);
   game.decayOffset(dt);
 
   const renderTick = game.renderTick(now);
@@ -299,7 +284,7 @@ function frame(now) {
   // Camera
   let targetScale = renderer.baseScale;
   if (game.controlling) {
-    game.myHead(alpha, myHead);
+    game.myHead(myHead);
     cam.x = myHead.x;
     cam.y = myHead.y;
   } else {
@@ -314,7 +299,9 @@ function frame(now) {
       }
     }
     if (target) {
-      target.headAt(target.deathTick <= renderTick ? target.lastTick : renderTick, spec);
+      const ex = target.deathTick > renderTick && renderTick > target.lastTick ? game.extrapolate(target, renderTick) : null;
+      if (ex) { spec.x = ex.head.x; spec.y = ex.head.y; }
+      else target.headAt(target.deathTick <= renderTick ? target.lastTick : renderTick, spec);
     } else {
       spec.x = cam.x; spec.y = cam.y;
     }
@@ -325,7 +312,7 @@ function frame(now) {
   }
   cam.scale += (targetScale - cam.scale) * (1 - Math.exp(-dt / 300));
 
-  renderer.draw(game, { now, renderTick, serverTick, alpha, myHead, cam, zone });
+  renderer.draw(game, { now, renderTick, serverTick, myHead, cam, zone });
 
   // Countdown / center message (every frame, cheap)
   const toGo = (game.playTick - serverTick) / TICK_RATE;
@@ -431,7 +418,7 @@ const diag = {
       `<b>Device </b> ${sh.fps} fps, slowest frame ${c(sh.frame, 100)} ms\n` +
       `<b>Network</b> ping ${Math.round(net.rtt)} ms (worst ${c(pingMax, 150)}), update gap ${c(sh.gap, 150)} ms\n` +
       `<b>Server </b> hiccup ${c(this.srv.lag, 80)} ms, tick ${this.srv.step} ms (worst ${this.srv.maxStep})\n` +
-      `<b>You    </b> late inputs ${st.late}, corrections ${st.corrections}, buffer ${game.pending ? game.pending.length : 0}`;
+      `<b>You    </b> late inputs ${st.late}, corrections ${st.corrections}, lead ${game.lead ? Math.round(game.lead) : 0} (+${game.margin || 0})`;
     if (this.spikes.length) {
       out += '\n<b>Recent spikes</b>';
       for (const s of this.spikes.slice().reverse()) {

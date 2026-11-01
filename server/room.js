@@ -161,6 +161,7 @@ export class Room {
       if (client) {
         client.player = p;
         client.queue = [];
+        client.lastInput = -1;
       }
     }
 
@@ -177,7 +178,7 @@ export class Room {
 
     const info = players.map((p) => ({ id: p.id, name: p.name, color: p.color, bot: p.bot, x: p.x, y: p.y, a: p.a }));
     for (const c of this.clients) {
-      c.send({ t: 'start', you: c.player.id, seed, R0, playTick: this.round.playTick, tick: 0, players: info, seq: c.lastSeq });
+      c.send({ t: 'start', you: c.player.id, seed, R0, playTick: this.round.playTick, tick: 0, players: info });
     }
   }
 
@@ -192,15 +193,13 @@ export class Room {
     for (const p of r.players) {
       if (!p.alive) continue;
       if (p.client) {
-        const inp = p.client.queue.shift();
-        if (inp) {
-          p.turn = inp.turn;
-          p.client.ack = inp.seq;
-        } else {
-          // No input this tick (late packet): keep the previous turn and tell
-          // the client, so it can keep a bigger buffer.
-          p.client.starved = true;
-        }
+        // Each input is stamped with the tick it's for. Inputs for ticks that
+        // already ran are too late: their turn still becomes the latest known
+        // intent, but they can't change the past, so they never pile up.
+        const q = p.client.queue;
+        while (q.length && q[0].tick < t) p.turn = q.shift().turn;
+        if (q.length && q[0].tick === t) p.turn = q.shift().turn;
+        else p.client.starved = true; // missing: keep the previous turn, tell the client
       } else if (moving) {
         p.turn = botThink(p, r, zone, zt, t);
       }
@@ -278,7 +277,7 @@ export class Room {
     const body = encodeTickBody(entries);
     for (const c of this.clients) {
       const msg = new Uint8Array(body); // copy, header differs per client
-      writeTickHeader(msg, t, c.ack, c.queue.length, c.starved);
+      writeTickHeader(msg, t, c.player ? c.lastInput : 0, c.starved);
       c.starved = false;
       c.sendBinary(msg);
     }

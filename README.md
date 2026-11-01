@@ -34,6 +34,7 @@ freezes for a moment every 4 s (like a CPU-starved host):
 ```bash
 SIM_LAG_MS=75 SIM_JITTER_MS=40 npm start
 SIM_STALL_MS=150 npm start
+SIM_SPIKE_MS=550 SIM_SPIKE_EVERY_MS=15000 npm start   # connection goes silent now and then
 ```
 
 ### Diagnosing lag
@@ -94,24 +95,28 @@ server/          Node.js server (matchmaking, rooms, authoritative simulation, b
 
 * The server runs the only real simulation at 30 ticks/s. It decides positions,
   collisions, kills and the winner.
-* A client only sends "left / straight / right" for each tick. It can't send
-  positions, so there's nothing to fake. The server ignores malformed or excess input.
+* A client only sends "left / straight / right" for a given tick. It can't send
+  positions, so there's nothing to fake. The server ignores malformed, duplicate,
+  late or far-future input.
 
 ### But it feels instant (client-side prediction)
 
 * **Your snake:** your input is applied locally right away, using the exact same rules
-  (`public/shared/sim.js`) as the server. Each server update says which of your inputs
-  it has processed. The client rewinds to the server's state and replays the rest
-  (reconciliation). State is kept as float32 on both sides and gap timing comes from a
-  shared seed, so the replay usually matches the server exactly. When it doesn't (a late
-  packet), the small difference is blended out over ~100 ms instead of snapping.
-* **Other snakes:** shown slightly in the past and interpolated between server ticks.
-  The client measures how unevenly updates arrive and adjusts the delay (about 70 ms on a
-  good connection, more on a jittery one), so other snakes never freeze or jump.
-* **Input pacing:** the server reports how many of your inputs it has queued, and flags
-  every tick where your input arrived too late. The client sends slightly faster or
-  slower to keep the smallest queue at about one input. A bad connection automatically
-  gets a bigger buffer, and a good one gets almost none.
+  (`public/shared/sim.js`) as the server. Each server update carries the state for a
+  tick. The client rewinds to it and replays its inputs for later ticks
+  (reconciliation). State is float32 on both sides and gap timing comes from a shared
+  seed, so the replay usually matches the server exactly. When it doesn't (a late input),
+  the small difference is blended out over ~100 ms instead of snapping.
+* **Tick-stamped input:** every input names the server tick it's for, and is sent so it
+  arrives just before that tick (lead = round trip + a small margin). The server applies
+  it on exactly that tick. An input that arrives too late is dropped, and its turn just
+  becomes the latest known intent. A network stall therefore can never build up a
+  permanent input delay. The margin grows by a tick when an input is late and shrinks
+  again after a few quiet seconds.
+* **Other snakes:** shown slightly in the past and interpolated between server ticks,
+  with the delay sized to normal jitter. If updates stop (a network stall), they keep
+  moving along their current curve for up to 0.5 s. Curve Fever snakes are predictable,
+  and their gaps are deterministic, so this usually matches what really happened.
 * State updates are compact binary (14 bytes per snake per tick). Everything else is JSON.
 
 ### Match flow

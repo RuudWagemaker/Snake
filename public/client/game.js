@@ -2,21 +2,29 @@
 //
 // Netcode model:
 //  * The server is authoritative: it runs the simulation and decides every death.
-//  * Own snake: client-side prediction. Every client tick we send our input
-//    (one input per simulation tick) and immediately simulate it locally with
-//    the shared rules. When the server state arrives we rewind to it and replay
-//    the inputs the server has not processed yet (reconciliation). Any small
-//    difference is smoothed out visually instead of snapping.
-//  * Other snakes: rendered a few ticks in the past and interpolated between
-//    server ticks, so they move smoothly regardless of network jitter.
-import { TICK_MS } from '../shared/constants.js';
+//  * Inputs are stamped with the server tick they are meant for. The client aims
+//    them to arrive just before that tick (lead = round trip + a small margin
+//    that adapts to jitter). The server applies each input on exactly its tick
+//    and drops inputs that arrive too late, so a network stall can never build
+//    up a permanent input delay.
+//  * Own snake: client-side prediction. Each input is simulated locally right
+//    away with the shared rules. When the server state for tick T arrives, we
+//    rewind to it and replay our inputs for ticks after T (reconciliation).
+//    Small differences are blended out instead of snapping.
+//  * Other snakes: shown a few ticks in the past and interpolated. If updates
+//    stop for a moment, they keep moving along their current curve
+//    (extrapolation) instead of freezing.
+import { TICK_MS, TURN_RATE, DT } from '../shared/constants.js';
 import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit } from '../shared/sim.js';
 import { FLAG_GAP, FLAG_DIED, encodeInput } from '../shared/protocol.js';
 
 const MIN_INTERP = 2;       // remote snakes are shown at least this many ticks in the past
-const MAX_INTERP = 12;
-const MAX_PENDING = 90;
-const WINDOW = 90;          // ticks of history used to measure jitter (3 s)
+const MAX_INTERP = 6;       // bigger gaps are bridged by extrapolation instead
+const MAX_EXTRAP = 15;      // keep other snakes moving for up to 0.5 s without updates
+const MAX_PENDING = 120;
+const WINDOW = 150;         // ticks of history used to measure jitter (5 s)
+const MIN_LEAD_MARGIN = 1;
+const MAX_LEAD_MARGIN = 6;
 
 export class Snake {
   constructor(info) {
@@ -88,7 +96,6 @@ export class Snake {
 export class ClientGame {
   constructor(net) {
     this.net = net;
-    this.seq = 0;
     this.active = false;
     this.onEvent = () => {};
   }
@@ -105,6 +112,7 @@ export class ClientGame {
     this.snakes = new Map();
     for (const p of msg.players) {
       const s = new Snake(p);
+      s.gaps = new GapSchedule(msg.seed, p.id);
       s.push(msg.tick, p.x, p.y, p.a, 0);
       this.snakes.set(p.id, s);
     }
@@ -114,28 +122,34 @@ export class ClientGame {
     this.me = this.snakes.get(this.myId);
     this.grid = new SegGrid();
     this.latestTick = msg.tick;
-    this.seq = Math.max(this.seq, msg.seq || 0);
 
     // prediction state
     this.controlling = !!this.me;
-    this.myGaps = new GapSchedule(msg.seed, this.myId);
-    this.pending = [];
+    this.myGaps = this.me.gaps;
+    this.pending = [];        // [{tick, turn}] sent but not yet confirmed
+    this.lastTarget = null;   // tick of the newest input we generated
+    this.lastTurn = 0;
     this.pred = { x: this.me.xs[0], y: this.me.ys[0], a: this.me.as[0] };
+    this.predTick = msg.tick;
     this.path = [];
     this.predStopped = false;
     this.offset = { x: 0, y: 0 };
+    this.alpha = 0;
     this.myDeath = null;
     this.stats = { reconciles: 0, corrections: 0, maxErr: 0, late: 0 };
 
-    // clock + input pacing
+    // clock, input lead, jitter
     this.clockOffset = null;
-    this.bufferedAvg = 2;
-    this.tickScale = 1;
-    this.bufHist = [];       // server-side input queue length per tick
-    this.starvedAt = -1e9;   // last tick our input arrived too late
-    this.latePeak = 0;       // recent worst lateness of tick messages (ticks), slowly decaying
+    this.margin = 2;          // extra ticks of lead on top of the round trip
+    this.lead = null;         // smoothed lead actually used (ticks)
+    this.slackHist = [];
+    this.starvedAt = -1e9;
+    this.marginChangedAt = -1e9;
+    this.lateHist = [];
+    this.interpTarget = MIN_INTERP + 1;
     this.interp = MIN_INTERP + 1;
     this.lastRenderNow = 0;
+    this.lastFrameNow = 0;
   }
 
   // ---- server messages -------------------------------------------------
@@ -161,37 +175,52 @@ export class ClientGame {
     // Clock sync: estimate which server tick "now" corresponds to. Biased toward
     // the earliest arrivals so late packets don't drag the estimate around.
     const sample = d.tick - performance.now() / TICK_MS;
-    if (this.clockOffset === null || sample - this.clockOffset > 15 || sample - this.clockOffset < -30) this.clockOffset = sample;
+    if (this.clockOffset === null || sample - this.clockOffset > 15 || sample - this.clockOffset < -90) this.clockOffset = sample;
     else if (sample > this.clockOffset) this.clockOffset += (sample - this.clockOffset) * 0.25;
     else this.clockOffset += (sample - this.clockOffset) * 0.01;
 
     // Jitter: how late was this message compared to the earliest arrivals?
-    // Remote snakes are delayed just enough to cover the worst recent lateness.
-    // The peak fades with a ~10 s half-life, so occasional spikes (e.g. every
-    // few seconds) are remembered and don't cause a stutter each time.
-    const late = Math.max(0, this.clockOffset - sample);
-    this.latePeak = Math.max(late, this.latePeak * 0.9977);
-
-    // Input pacing. The server tells us how many of our inputs are queued and
-    // whether it ran out this tick. Keep the smallest queue over the last few
-    // seconds at about 1: never empty, but no extra delay either. On a jittery
-    // connection this automatically grows the buffer.
-    this.bufferedAvg = this.bufferedAvg * 0.9 + d.buffered * 0.1;
-    if (this.controlling) {
-      // Ignore the first second: the server starts before our first input can arrive.
-      if (d.starved && d.tick > 30) { this.starvedAt = d.tick; this.stats.late++; }
-      pushWindow(this.bufHist, d.buffered);
-      const minBuf = Math.min(...this.bufHist);
-      const sinceStarved = d.tick - this.starvedAt;
-      if (sinceStarved < 45) this.tickScale = 0.92;                    // input arrived late: build buffer fast
-      else if (minBuf < 1) this.tickScale = 0.97;                      // cutting it close
-      else if (minBuf > 2 && sinceStarved > 150) this.tickScale = 1.04; // 5 s stable: trim excess delay
-      else this.tickScale = 1;
+    // Remote snakes are delayed enough to cover normal jitter (90th percentile).
+    // Rare long stalls are bridged by extrapolation, not by more delay.
+    pushWindow(this.lateHist, Math.max(0, this.clockOffset - sample));
+    if ((d.tick & 7) === 0) {
+      const sorted = this.lateHist.slice().sort((a, b) => a - b);
+      const p90 = sorted[Math.floor(sorted.length * 0.9)] || 0;
+      this.interpTarget = Math.min(MAX_INTERP, Math.max(MIN_INTERP, 1 + p90 * 1.2));
     }
 
-    if (mine) {
-      if (mine.flags & FLAG_DIED) this.controlling = false;
-      else if (this.controlling) this.reconcile(d.ack, mine, d.tick);
+    if (this.controlling) {
+      this.adaptLead(d);
+      if (mine) {
+        if (mine.flags & FLAG_DIED) this.controlling = false;
+        else this.reconcile(mine, d.tick);
+      }
+    }
+  }
+
+  /**
+   * Input lead control. The server reports the newest input tick it has
+   * received; "slack" is how many ticks early our inputs arrive. If an input
+   * was missing when its tick ran, add a tick of margin. After 5 quiet seconds
+   * with plenty of slack, take margin away again.
+   */
+  adaptLead(d) {
+    if (d.tick <= 30) return; // the first second: our first inputs are still on the way
+    const slack = d.lastInput - d.tick;
+    pushWindow(this.slackHist, slack);
+    if (d.starved) {
+      this.stats.late++;
+      this.starvedAt = d.tick;
+      if (d.tick - this.marginChangedAt > 30) {
+        this.margin = Math.min(MAX_LEAD_MARGIN, this.margin + 1);
+        this.marginChangedAt = d.tick;
+      }
+    } else if (d.tick - this.starvedAt > 150 && d.tick - this.marginChangedAt > 60) {
+      const minSlack = Math.min(...this.slackHist);
+      if (minSlack >= 2.5) {
+        this.margin = Math.max(MIN_LEAD_MARGIN, this.margin - 0.5);
+        this.marginChangedAt = d.tick;
+      }
     }
   }
 
@@ -222,41 +251,80 @@ export class ClientGame {
     }
   }
 
-  // ---- prediction ------------------------------------------------------
+  // ---- input + prediction ------------------------------------------------
 
-  /** Called at the fixed client tick rate while we control a live snake. */
-  clientTick(turn) {
-    if (!this.controlling) return;
-    this.seq++;
-    this.net.sendBinary(encodeInput(this.seq, turn));
-    this.pending.push({ seq: this.seq, turn });
-    if (this.pending.length > MAX_PENDING) this.pending.shift();
-    this.advance(this.latestTick + this.pending.length, turn);
-  }
+  /**
+   * Called every frame while we control a live snake. Generates one input per
+   * server tick, stamped with the tick it should arrive for.
+   */
+  generateInputs(now, turn, rttMs) {
+    const dtMs = this.lastFrameNow ? Math.min(250, now - this.lastFrameNow) : 0;
+    this.lastFrameNow = now;
+    if (!this.controlling || this.clockOffset === null) return;
 
-  advance(t, turn) {
-    const p = this.pred;
-    if (!this.predStopped && t > this.playTick) {
-      stepSnake(p, turn);
-      // Stop at an obvious crash instead of sliding through a line while we
-      // wait for the server's verdict.
-      if (checkHit(this.grid, zoneAt(this.plan, t - this.playTick), p.x, p.y, this.myId, t) !== null) {
-        this.predStopped = true;
-      }
+    // Lead = round trip + margin. Changes are eased in so the snake never jumps.
+    const want = (rttMs > 0 ? rttMs / TICK_MS : 4) + this.margin;
+    if (this.lead === null) this.lead = want;
+    const maxStep = (want > this.lead ? 3 : 0.5) * dtMs / 1000; // ticks per second
+    this.lead += Math.max(-maxStep, Math.min(maxStep, want - this.lead));
+
+    const targetF = this.serverTickNow(now) + this.lead;
+    const target = Math.floor(targetF);
+    if (this.lastTarget === null || target - this.lastTarget > 30 || this.lastTarget - target > 30) {
+      // first input, or the clock jumped (e.g. the tab was asleep): resync
+      this.lastTarget = Math.max(this.latestTick, target - 1);
     }
-    this.path.push({ x: p.x, y: p.y, a: p.a, t, solid: t <= this.playTick || !this.myGaps.isGap(t - this.playTick) });
+    while (this.lastTarget < target) {
+      const t = ++this.lastTarget;
+      this.net.sendBinary(encodeInput(t, turn));
+      this.pending.push({ tick: t, turn });
+      if (this.pending.length > MAX_PENDING) this.pending.shift();
+      this.advanceTo(t, turn);
+    }
+    this.alpha = Math.max(0, Math.min(1, targetF - target));
   }
 
-  reconcile(ack, e, tick) {
+  /** Tab is going to the background: make sure the server doesn't keep a held turn. */
+  goStraight() {
+    if (!this.controlling || this.lastTarget === null) return;
+    const t = ++this.lastTarget;
+    this.net.sendBinary(encodeInput(t, 0));
+    this.pending.push({ tick: t, turn: 0 });
+    this.advanceTo(t, 0);
+  }
+
+  /** Step the prediction forward to tick t, using `turn` for that tick. */
+  advanceTo(t, turn) {
+    const p = this.pred;
+    while (this.predTick < t) {
+      const tt = ++this.predTick;
+      // A skipped tick (rare: after a resync) repeats the previous turn, like the server does.
+      const tr = tt === t ? turn : this.lastTurn;
+      if (!this.predStopped && tt > this.playTick) {
+        stepSnake(p, tr);
+        // Stop at an obvious crash instead of sliding through a line while we
+        // wait for the server's verdict.
+        if (checkHit(this.grid, zoneAt(this.plan, tt - this.playTick), p.x, p.y, this.myId, tt) !== null) {
+          this.predStopped = true;
+        }
+      }
+      this.path.push({ x: p.x, y: p.y, a: p.a, t: tt, solid: tt <= this.playTick || !this.myGaps.isGap(tt - this.playTick) });
+    }
+    this.lastTurn = turn;
+  }
+
+  reconcile(e, tick) {
     const oldX = this.pred.x, oldY = this.pred.y;
     let i = 0;
-    while (i < this.pending.length && this.pending[i].seq <= ack) i++;
+    while (i < this.pending.length && this.pending[i].tick <= tick) i++;
     if (i) this.pending.splice(0, i);
     this.pred.x = e.x; this.pred.y = e.y; this.pred.a = e.a;
+    this.predTick = tick;
     this.path.length = 0;
     this.predStopped = false;
-    for (let j = 0; j < this.pending.length; j++) this.advance(tick + j + 1, this.pending[j].turn);
-    // Smooth visual correction
+    // The server's turn at `tick` is unknown here, but only matters for skipped
+    // ticks; our own last pending turn before the replay is the best guess.
+    for (const p of this.pending) this.advanceTo(p.tick, p.turn);
     const dx = oldX - this.pred.x, dy = oldY - this.pred.y;
     this.stats.reconciles++;
     if (dx * dx + dy * dy > 0.01) { this.stats.corrections++; this.stats.maxErr = Math.max(this.stats.maxErr, Math.hypot(dx, dy)); }
@@ -281,33 +349,72 @@ export class ClientGame {
     // Ease the interpolation delay toward what the measured jitter needs.
     const dt = Math.min(100, Math.max(0, now - this.lastRenderNow));
     this.lastRenderNow = now;
-    const target = Math.min(MAX_INTERP, Math.max(MIN_INTERP, 1 + this.latePeak * 1.1));
     // Grow fast (avoid stutter), shrink slowly (avoid visible speed changes).
-    const rate = target > this.interp ? 1 / 300 : 1 / 3000;
-    this.interp += (target - this.interp) * Math.min(1, dt * rate);
+    const rate = this.interpTarget > this.interp ? 1 / 500 : 1 / 3000;
+    this.interp += (this.interpTarget - this.interp) * Math.min(1, dt * rate);
     let t = this.serverTickNow(now) - this.interp;
-    if (t > this.latestTick) t = this.latestTick;
+    if (t > this.latestTick + MAX_EXTRAP) t = this.latestTick + MAX_EXTRAP;
     if (t < this.latestTick - MAX_INTERP - 3) t = this.latestTick - MAX_INTERP - 3;
     return t;
   }
 
-  /** Predicted own head, interpolated between client ticks (alpha 0..1). */
-  myHead(alpha, out) {
+  /**
+   * Where a remote snake probably is at tick `rt` when we have no data yet:
+   * keep its current turn, respect its (deterministic) gaps, and stop at
+   * anything it would crash into. Returns {pts, head} or null.
+   */
+  extrapolate(s, rt) {
+    const k = Math.min(rt - s.lastTick, MAX_EXTRAP);
+    if (k <= 0 || !s.alive) return null;
+    const i = s.n - 1;
+    let turn = 0;
+    if (i > 0) {
+      let da = s.as[i] - s.as[i - 1];
+      if (da > Math.PI) da -= Math.PI * 2; else if (da < -Math.PI) da += Math.PI * 2;
+      if (Math.abs(da) > TURN_RATE * DT * 0.5) turn = Math.sign(da);
+    }
+    const st = { x: s.xs[i], y: s.ys[i], a: s.as[i] };
+    const pts = [];
+    const whole = Math.floor(k);
+    const solidAt = (t) => t <= this.playTick || !s.gaps.isGap(t - this.playTick);
+    for (let j = 1; j <= whole + 1; j++) {
+      const t = s.lastTick + j;
+      const nx = { x: st.x, y: st.y, a: st.a };
+      if (t > this.playTick) stepSnake(nx, turn);
+      if (t > this.playTick && checkHit(this.grid, zoneAt(this.plan, t - this.playTick), nx.x, nx.y, s.id, t) !== null) {
+        return { pts, head: st };
+      }
+      if (j > whole) {
+        // fractional last step
+        const f = k - whole;
+        const head = { x: st.x + (nx.x - st.x) * f, y: st.y + (nx.y - st.y) * f, a: nx.a };
+        if (f > 0) pts.push({ x: head.x, y: head.y, solid: solidAt(t) });
+        return { pts, head };
+      }
+      st.x = nx.x; st.y = nx.y; st.a = nx.a;
+      pts.push({ x: st.x, y: st.y, solid: solidAt(t) });
+    }
+    return { pts, head: st };
+  }
+
+  /** Predicted own head, interpolated between ticks. */
+  myHead(out) {
     const P = this.path;
     const n = P.length;
     const me = this.me;
     const last = me.n - 1;
-    let ax, ay, bx, by, a;
+    const alpha = this.alpha;
+    let ax, ay;
     if (n === 0) {
       out.x = me.xs[last] + this.offset.x; out.y = me.ys[last] + this.offset.y; out.a = me.as[last];
       return out;
     }
     if (n === 1) { ax = me.xs[last]; ay = me.ys[last]; }
     else { ax = P[n - 2].x; ay = P[n - 2].y; }
-    bx = P[n - 1].x; by = P[n - 1].y; a = P[n - 1].a;
-    out.x = ax + (bx - ax) * alpha + this.offset.x;
-    out.y = ay + (by - ay) * alpha + this.offset.y;
-    out.a = a;
+    const b = P[n - 1];
+    out.x = ax + (b.x - ax) * alpha + this.offset.x;
+    out.y = ay + (b.y - ay) * alpha + this.offset.y;
+    out.a = b.a;
     return out;
   }
 

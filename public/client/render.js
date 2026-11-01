@@ -105,7 +105,12 @@ export class Renderer {
         const ft = rt - sn.firstTick;
         let limit = Math.floor(ft);
         let extra = null;
-        if (limit >= sn.n - 1) limit = sn.n - 1;
+        if (limit >= sn.n - 1) {
+          limit = sn.n - 1;
+          // No data yet for this moment: keep it moving along its curve.
+          const ex = game.extrapolate(sn, rt);
+          if (ex) { extra = ex.pts; sn.exHead = ex.head; }
+        }
         else if (limit < 0) limit = 0;
         else {
           const k = ft - limit;
@@ -154,7 +159,8 @@ export class Renderer {
         hx = f.myHead.x; hy = f.myHead.y; ha = f.myHead.a; alive = true;
       } else {
         alive = sn.deathTick > rt;
-        const p = sn.headAt(alive ? rt : sn.lastTick, this.tmp);
+        const p = alive && rt > sn.lastTick && sn.exHead ? sn.exHead : sn.headAt(alive ? rt : sn.lastTick, this.tmp);
+        sn.exHead = null;
         hx = p.x; hy = p.y; ha = p.a;
       }
       if (hx < v.x0 - 100 || hx > v.x1 + 100 || hy < v.y0 - 100 || hy > v.y1 + 100) {

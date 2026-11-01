@@ -1,10 +1,13 @@
 // Binary messages for the hot path (inputs up, state down). Everything else is JSON.
 //
 // INPUT  (client -> server), 6 bytes:
-//   u8 type=1 | u32 seq | i8 turn
+//   u8 type=1 | u32 tick | i8 turn
+//   `tick` is the server tick this input is for. The server applies it on that
+//   tick and drops it if it arrives too late.
 // TICK   (server -> client), 11 + 14*n bytes:
-//   u8 type=2 | u32 tick | u32 ack | u8 buffered | u8 count | count * entry
-//   buffered: low 7 bits = inputs still queued, high bit = queue was empty this tick
+//   u8 type=2 | u32 tick | u32 lastInput | u8 flags | u8 count | count * entry
+//   lastInput: newest input tick received from this client
+//   flags: bit7 = this client's input for `tick` was missing (arrived late)
 //   entry: u8 id | f32 x | f32 y | f32 angle | u8 flags (bit0 gap, bit1 died this tick)
 
 export const MSG_INPUT = 1;
@@ -14,11 +17,11 @@ export const FLAG_DIED = 2;
 export const TICK_HEADER = 11;
 export const TICK_ENTRY = 14;
 
-export function encodeInput(seq, turn) {
+export function encodeInput(tick, turn) {
   const buf = new ArrayBuffer(6);
   const v = new DataView(buf);
   v.setUint8(0, MSG_INPUT);
-  v.setUint32(1, seq);
+  v.setUint32(1, tick);
   v.setInt8(5, turn);
   return buf;
 }
@@ -28,7 +31,7 @@ export function decodeInput(u8) {
   const v = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   if (v.getUint8(0) !== MSG_INPUT) return null;
   const turn = v.getInt8(5);
-  return { seq: v.getUint32(1), turn: turn < 0 ? -1 : turn > 0 ? 1 : 0 };
+  return { tick: v.getUint32(1), turn: turn < 0 ? -1 : turn > 0 ? 1 : 0 };
 }
 
 /** Writes the shared per-snake part of a tick message. Returns a Uint8Array. */
@@ -50,11 +53,11 @@ export function encodeTickBody(entries) {
 }
 
 /** Fill in the per-client header fields (in place). */
-export function writeTickHeader(u8, tick, ack, buffered, starved = false) {
+export function writeTickHeader(u8, tick, lastInput, starved = false) {
   const v = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   v.setUint32(1, tick);
-  v.setUint32(5, ack);
-  v.setUint8(9, Math.min(127, buffered) | (starved ? 0x80 : 0));
+  v.setUint32(5, Math.max(0, lastInput));
+  v.setUint8(9, starved ? 0x80 : 0);
 }
 
 export function decodeTick(arrayBuffer) {
@@ -73,6 +76,5 @@ export function decodeTick(arrayBuffer) {
     };
     o += TICK_ENTRY;
   }
-  const b = v.getUint8(9);
-  return { tick: v.getUint32(1), ack: v.getUint32(5), buffered: b & 0x7f, starved: (b & 0x80) !== 0, entries };
+  return { tick: v.getUint32(1), lastInput: v.getUint32(5), starved: (v.getUint8(9) & 0x80) !== 0, entries };
 }

@@ -3,17 +3,27 @@ import { TICK_MS } from '../public/shared/constants.js';
 import { decodeInput } from '../public/shared/protocol.js';
 import { Room } from './room.js';
 
-const MAX_QUEUE = 32;         // max buffered inputs per player (~1 s); bursts on bad connections must fit
+const MAX_QUEUE = 64;         // max queued inputs per player
+const MAX_INPUT_AHEAD = 90;   // ignore inputs stamped more than 3 s in the future
 const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
 
 // Development aid: simulate a bad network. SIM_LAG_MS is one-way delay in each
 // direction, SIM_JITTER_MS adds random extra delay (order is preserved, like TCP).
 const SIM_LAG_MS = Number(process.env.SIM_LAG_MS) || 0;
 const SIM_JITTER_MS = Number(process.env.SIM_JITTER_MS) || 0;
+// SIM_SPIKE_MS + SIM_SPIKE_EVERY_MS: the connection goes silent (both ways) for
+// SIM_SPIKE_MS every SIM_SPIKE_EVERY_MS, like Wi-Fi pausing to scan.
+const SIM_SPIKE_MS = Number(process.env.SIM_SPIKE_MS) || 0;
+const SIM_SPIKE_EVERY_MS = Number(process.env.SIM_SPIKE_EVERY_MS) || 15000;
 // SIM_STALL_MS freezes the whole server for that long every 4 s, like a CPU-starved host.
 const SIM_STALL_MS = Number(process.env.SIM_STALL_MS) || 0;
+function spikeRelease(at) {
+  if (!SIM_SPIKE_MS) return at;
+  const phase = at % SIM_SPIKE_EVERY_MS;
+  return phase < SIM_SPIKE_MS ? at - phase + SIM_SPIKE_MS : at;
+}
 function makeDelayer() {
-  if (!SIM_LAG_MS && !SIM_JITTER_MS) return null;
+  if (!SIM_LAG_MS && !SIM_JITTER_MS && !SIM_SPIKE_MS) return null;
   // Strict FIFO with one timer, so messages are never reordered (TCP never does).
   const queue = [];
   let timer = null;
@@ -25,7 +35,8 @@ function makeDelayer() {
   };
   return (fn) => {
     const last = queue.length ? queue[queue.length - 1].at : 0;
-    queue.push({ at: Math.max(last, performance.now() + SIM_LAG_MS + Math.random() * SIM_JITTER_MS), fn });
+    const at = spikeRelease(performance.now() + SIM_LAG_MS + Math.random() * SIM_JITTER_MS);
+    queue.push({ at: Math.max(last, at), fn });
     if (!timer) timer = setTimeout(flush, queue[0].at - performance.now());
   };
 }
@@ -43,10 +54,9 @@ class Client {
     this.name = 'Player';
     this.room = null;
     this.player = null;   // current round's player object
-    this.queue = [];      // pending inputs {seq, turn}
-    this.ack = 0;         // last input seq applied by the simulation
-    this.lastSeq = 0;     // last seq received
-    this.starved = false; // input queue ran dry this tick
+    this.queue = [];      // pending inputs {tick, turn}, in tick order
+    this.lastInput = -1;  // newest input tick received this round
+    this.starved = false; // input for the current tick was missing
     this.isAlive = true;  // heartbeat
     this.delayIn = makeDelayer();
     this.delayOut = makeDelayer();
@@ -63,9 +73,10 @@ class Client {
 
   onInput(data) {
     const msg = decodeInput(data);
-    if (!msg || !this.player || !this.player.alive) return;
-    if (msg.seq <= this.lastSeq) return;
-    this.lastSeq = msg.seq;
+    if (!msg || !this.player || !this.player.alive || !this.room || !this.room.round) return;
+    if (msg.tick <= this.lastInput) return;                            // duplicate / out of order
+    if (msg.tick > this.room.round.tick + MAX_INPUT_AHEAD) return;    // nonsense (or from an old round)
+    this.lastInput = msg.tick;
     this.queue.push(msg);
     if (this.queue.length > MAX_QUEUE) this.queue.shift();
   }
