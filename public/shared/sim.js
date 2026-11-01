@@ -1,6 +1,6 @@
 // Deterministic simulation rules shared by server and client.
 import {
-  DT, SPEED, TURN_RATE, HIT_DIST, LINE_WIDTH, SELF_IGNORE_TICKS, GRID_CELL,
+  DT, SPEED, TURN_RATE, LINE_WIDTH, SELF_IGNORE_TICKS, GRID_CELL, SPEED_MUL, MIN_WIDTH, MAX_WIDTH,
   GAP_LEN_TICKS, GAP_FIRST_MIN, GAP_FIRST_MAX, GAP_INTERVAL_MIN, GAP_INTERVAL_MAX,
   ZONE_PHASES, TICK_RATE, KILLER_ZONE,
 } from './constants.js';
@@ -22,15 +22,43 @@ export function mulberry32(seed) {
  * Values are rounded to float32 so the client can replay from the exact
  * state the server sends over the wire (which is float32).
  */
-export function stepSnake(s, turn) {
+export function stepSnake(s, turn, speed = 1) {
   let a = s.a + turn * TURN_RATE * DT;
   if (a > Math.PI) a -= TAU;
   else if (a < -Math.PI) a += TAU;
   a = Math.fround(a);
   s.a = a;
-  s.x = Math.fround(s.x + Math.cos(a) * SPEED * DT);
-  s.y = Math.fround(s.y + Math.sin(a) * SPEED * DT);
+  s.x = Math.fround(s.x + Math.cos(a) * SPEED * speed * DT);
+  s.y = Math.fround(s.y + Math.sin(a) * SPEED * speed * DT);
 }
+
+/**
+ * Active power-up modifiers for snake `id` on tick `t`. `effects` is a list of
+ * {type, start, end, targets: [ids]}; an effect is active for start <= t < end.
+ * Writes into and returns `out` ({speed, width, reverse, ghost}).
+ */
+export function modsAt(effects, id, t, out = {}) {
+  let speed = 1, width = LINE_WIDTH, reverse = false, ghost = false;
+  for (let i = 0; i < effects.length; i++) {
+    const e = effects[i];
+    if (t < e.start || t >= e.end || !e.targets.includes(id)) continue;
+    switch (e.type) {
+      case 'speed': case 'fast': speed *= SPEED_MUL; break;
+      case 'ghost': ghost = true; break;
+      case 'thin': width *= 0.5; break;
+      case 'fat': width *= 2; break;
+      case 'reverse': reverse = !reverse; break;
+    }
+  }
+  out.speed = Math.min(speed, SPEED_MUL * SPEED_MUL);
+  out.width = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, width));
+  out.reverse = reverse;
+  out.ghost = ghost;
+  return out;
+}
+
+/** Contact distance between a head (width hw) and a line (width lw). */
+export const hitDist = (hw, lw) => 0.45 * (hw + lw);
 
 /**
  * Gap timing is a pure function of (round seed, player id, ticks moved), so the
@@ -107,14 +135,14 @@ export class SegGrid {
     this.cell = cell;
     this.cells = new Map();
     this.x1 = []; this.y1 = []; this.x2 = []; this.y2 = [];
-    this.owner = []; this.tick = [];
+    this.owner = []; this.tick = []; this.w = [];
   }
   get size() { return this.owner.length; }
   _key(cx, cy) { return (cx + 32768) * 65536 + (cy + 32768); }
-  add(x1, y1, x2, y2, owner, tick) {
+  add(x1, y1, x2, y2, owner, tick, width = LINE_WIDTH) {
     const i = this.owner.length;
     this.x1.push(x1); this.y1.push(y1); this.x2.push(x2); this.y2.push(y2);
-    this.owner.push(owner); this.tick.push(tick);
+    this.owner.push(owner); this.tick.push(tick); this.w.push(width);
     const c = this.cell;
     const cx0 = Math.floor(Math.min(x1, x2) / c), cx1 = Math.floor(Math.max(x1, x2) / c);
     const cy0 = Math.floor(Math.min(y1, y2) / c), cy1 = Math.floor(Math.max(y1, y2) / c);
@@ -128,11 +156,12 @@ export class SegGrid {
     }
   }
   /**
-   * Returns the owner of the first segment within `r` of (px,py), or -2 if none.
-   * Segments owned by `selfId` newer than `selfMinTick` are ignored.
+   * Returns the owner of the first segment touching a head of width `hw` at
+   * (px,py), or -2 if none. Segments owned by `selfId` newer than `selfMinTick`
+   * are ignored (the neck).
    */
-  hit(px, py, r, selfId, selfMinTick) {
-    const c = this.cell, r2 = r * r;
+  hit(px, py, hw, selfId, selfMinTick) {
+    const c = this.cell, r = hitDist(hw, MAX_WIDTH);
     const cx0 = Math.floor((px - r) / c), cx1 = Math.floor((px + r) / c);
     const cy0 = Math.floor((py - r) / c), cy1 = Math.floor((py + r) / c);
     for (let cx = cx0; cx <= cx1; cx++) {
@@ -142,7 +171,8 @@ export class SegGrid {
         for (let j = 0; j < arr.length; j++) {
           const i = arr[j];
           if (this.owner[i] === selfId && this.tick[i] > selfMinTick) continue;
-          if (distSqPointSeg(px, py, this.x1[i], this.y1[i], this.x2[i], this.y2[i]) < r2) return this.owner[i];
+          const d = hitDist(hw, this.w[i]);
+          if (distSqPointSeg(px, py, this.x1[i], this.y1[i], this.x2[i], this.y2[i]) < d * d) return this.owner[i];
         }
       }
     }
@@ -163,10 +193,11 @@ export function distSqPointSeg(px, py, x1, y1, x2, y2) {
  * Collision check for a head at (x,y) on tick `t`.
  * Returns null if safe, KILLER_ZONE for the zone, or the owner id of the trail hit.
  */
-export function checkHit(grid, zone, x, y, id, t) {
+export function checkHit(grid, zone, x, y, id, t, width = LINE_WIDTH, ghost = false) {
   const dx = x - zone.x, dy = y - zone.y;
-  const rr = zone.r - LINE_WIDTH / 2;
+  const rr = zone.r - width / 2;
   if (rr <= 0 || dx * dx + dy * dy > rr * rr) return KILLER_ZONE;
-  const o = grid.hit(x, y, HIT_DIST, id, t - SELF_IGNORE_TICKS);
+  if (ghost) return null; // ghosts pass through lines (not through the zone)
+  const o = grid.hit(x, y, width, id, t - SELF_IGNORE_TICKS);
   return o === -2 ? null : o;
 }

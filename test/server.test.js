@@ -4,7 +4,7 @@ import WebSocket from 'ws';
 import { startServer } from '../server/index.js';
 import { Room } from '../server/room.js';
 import { InputBuffer } from '../server/inputs.js';
-import { stepSnake } from '../public/shared/sim.js';
+import { stepSnake, modsAt } from '../public/shared/sim.js';
 import { encodeInput, decodeTick, FLAG_DIED } from '../public/shared/protocol.js';
 import { TICK_RATE } from '../public/shared/constants.js';
 
@@ -23,7 +23,8 @@ test('a bot-filled round always ends with a ranking', () => {
   assert.equal(new Set(end.ranking.map((r) => r.id)).size, room.round.n);
 });
 
-test('server applies tick-stamped inputs exactly as the client predicts', { timeout: 30000 }, async () => {
+test('server applies tick-stamped inputs exactly as the client predicts (with power-ups)', { timeout: 40000 }, async () => {
+  process.env.SIM_ITEMS = '400'; // lots of power-ups, so effects happen during the test
   const srv = await startServer({ port: 0 });
   try {
     const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
@@ -43,6 +44,12 @@ test('server applies tick-stamped inputs exactly as the client predicts', { time
     assert.equal(me.name, 'bTesterb'); // sanitised
 
     const pattern = (t) => [1, 1, 1, 0, -1, -1, 0][t % 7];
+    const effects = [];
+    ws.on('message', (data, isBinary) => {
+      if (isBinary) return;
+      const m = JSON.parse(data.toString());
+      if (m.t === 'pickup' && m.targets.length) effects.push(m);
+    });
     let sentUpTo = 0;
     let prev = null, checked = 0, died = false, lastTurn = 0, lateInputSeen = false;
     await new Promise((resolve) => {
@@ -63,7 +70,8 @@ test('server applies tick-stamped inputs exactly as the client predicts', { time
         if (d.starved) lateInputSeen = true;
         if (prev && d.tick > start.playTick && !(e.flags & FLAG_DIED)) {
           const s = { x: prev.x, y: prev.y, a: prev.a };
-          stepSnake(s, turn);
+          const m = modsAt(effects, start.you, d.tick);
+          stepSnake(s, m.reverse ? -turn : turn, m.speed);
           assert.equal(s.x, e.x, `x at tick ${d.tick}`);
           assert.equal(s.y, e.y);
           assert.equal(s.a, e.a);
@@ -72,13 +80,15 @@ test('server applies tick-stamped inputs exactly as the client predicts', { time
         lastTurn = turn;
         prev = e;
         if (e.flags & FLAG_DIED) { died = true; resolve(); }
-        if (checked >= 90) resolve();
+        if (checked >= 240) resolve();
       });
     });
-    console.log(`verified ${checked} ticks, died=${died}, late=${lateInputSeen}`);
+    const onMe = effects.filter((e) => e.targets.includes(start.you));
+    console.log(`verified ${checked} ticks, died=${died}, late=${lateInputSeen}, power-ups picked ${effects.length}, affecting me ${onMe.length} (${onMe.map((e) => e.type).join(',')})`);
     assert.ok(checked > 10 || died, `checked ${checked} ticks`);
     ws.close();
   } finally {
+    delete process.env.SIM_ITEMS;
     await srv.close();
   }
 });

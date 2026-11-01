@@ -61,7 +61,7 @@ export function botThink(p, round, zone, zt, t) {
     s.x = p.x; s.y = p.y; s.a = p.a;
     let survived = b.horizon;
     for (let k = 1; k <= b.horizon; k++) {
-      stepSnake(s, k <= hold ? turn : 0);
+      stepSnake(s, k <= hold ? turn : 0, p.speed || 1);
       if (k <= 4 || (k & 1) === 0) {
         if (checkHit(round.grid, zEnd, s.x, s.y, p.id, t + k) !== null) { survived = k; break; }
       }
@@ -76,6 +76,15 @@ export function botThink(p, round, zone, zt, t) {
     }
     const d = Math.hypot(s.x - target.x, s.y - target.y);
     if (d > safeR) score -= ((d - safeR) / safeR) * 25;
+    // Go for nearby power-ups (survival still matters far more).
+    if (survived === b.horizon) {
+      let best = 260;
+      for (const it of round.items) {
+        const dd = Math.hypot(s.x - it.x, s.y - it.y);
+        if (dd < best) best = dd;
+      }
+      if (best < 260) score += (1 - best / 260) * 12;
+    }
     if (turn === b.turn) score += 2;
     if (turn !== 0 && Math.sign(b.spin) === turn && Math.abs(b.spin) > 16) score -= 15;
     if (turn === b.wander) score += 3;

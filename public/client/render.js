@@ -1,24 +1,40 @@
-import { LINE_WIDTH } from '../shared/constants.js';
+import { LINE_WIDTH, MAX_WIDTH, ITEM_RADIUS, POWERUPS } from '../shared/constants.js';
 import { FLAG_GAP } from '../shared/protocol.js';
 import { CHUNK } from './game.js';
 
 const TAU = Math.PI * 2;
+const GOOD = '#2ecc71', BAD = '#ff4d6d';
+
+/** Collects line segments into one Path2D per line width (power-ups change width). */
+class Runs {
+  constructor() { this.runs = []; this.cur = null; this.lx = NaN; this.ly = NaN; }
+  seg(x0, y0, x1, y1, w) {
+    if (!this.cur || this.cur.w !== w) {
+      this.cur = { path: new Path2D(), w };
+      this.runs.push(this.cur);
+      this.cur.path.moveTo(x0, y0);
+    } else if (this.lx !== x0 || this.ly !== y0) {
+      this.cur.path.moveTo(x0, y0);
+    }
+    this.cur.path.lineTo(x1, y1);
+    this.lx = x1; this.ly = y1;
+  }
+  stroke(ctx) {
+    for (const r of this.runs) { ctx.lineWidth = r.w; ctx.stroke(r.path); }
+  }
+}
 
 function buildChunk(s, i0, i1) {
-  const path = new Path2D();
+  const runs = new Runs();
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  let prevSolid = false;
   for (let i = i0; i <= i1; i++) {
     const x = s.xs[i], y = s.ys[i];
-    const solid = !(s.fl[i] & FLAG_GAP);
-    if (i > i0 && solid && prevSolid) path.lineTo(x, y);
-    else path.moveTo(x, y);
-    prevSolid = solid;
+    if (i > i0 && !(s.fl[i] & FLAG_GAP) && !(s.fl[i - 1] & FLAG_GAP)) runs.seg(s.xs[i - 1], s.ys[i - 1], x, y, s.width(i));
     if (x < x0) x0 = x; if (x > x1) x1 = x;
     if (y < y0) y0 = y; if (y > y1) y1 = y;
   }
-  const pad = LINE_WIDTH;
-  return { path, x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
+  const pad = MAX_WIDTH;
+  return { runs, x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
 }
 
 // Blend a #rrggbb colour toward the arena floor. Used for dead snakes' trails:
@@ -128,6 +144,8 @@ export class Renderer {
         this.drawTrail(sn, limit, extra, v, dead ? (sn.dimColor ||= dim(sn.color)) : sn.color, sn.vox || sn.voy ? sn : null);
       }
     }
+    this.drawItems(game, v, f.now);
+
     // Outside the zone
     ctx.beginPath();
     ctx.rect(v.x0 - 50, v.y0 - 50, v.x1 - v.x0 + 100, v.y1 - v.y0 + 100);
@@ -171,14 +189,27 @@ export class Renderer {
       }
       if (alive) {
         if (countdown) this.drawArrow(sn, hx, hy, ha, sn === game.me, f.now);
+        const tick = sn === game.me && game.controlling ? game.lastTarget - 1 + game.alpha : rt;
+        const m = game.modsNow(sn, tick, this.mods || (this.mods = {}));
+        const hr = Math.max(LINE_WIDTH, m.width) * 0.85;
+        if (m.ghost) ctx.globalAlpha = 0.45 + 0.15 * Math.sin(f.now / 90);
         ctx.fillStyle = sn.color;
         ctx.beginPath();
-        ctx.arc(hx, hy, LINE_WIDTH * 0.85, 0, TAU);
+        ctx.arc(hx, hy, hr, 0, TAU);
         ctx.fill();
         ctx.fillStyle = '#fff';
         ctx.beginPath();
-        ctx.arc(hx + Math.cos(ha) * 1.6, hy + Math.sin(ha) * 1.6, LINE_WIDTH * 0.32, 0, TAU);
+        ctx.arc(hx + Math.cos(ha) * hr * 0.3, hy + Math.sin(ha) * hr * 0.3, hr * 0.38, 0, TAU);
         ctx.fill();
+        ctx.globalAlpha = 1;
+        if (m.reverse || m.speed !== 1 || m.ghost || m.width !== LINE_WIDTH) {
+          // a ring shows a snake is powered up (green = its own, red = hit)
+          ctx.strokeStyle = m.reverse || (m.width > LINE_WIDTH) ? BAD : GOOD;
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath(); ctx.arc(hx, hy, hr + 5, 0, TAU); ctx.stroke();
+          ctx.setLineDash([]);
+        }
         if (sn !== game.me || countdown) labels.push({ sn, x: hx, y: hy });
       } else {
         if (!sn.burstAt) sn.burstAt = f.now;
@@ -225,9 +256,10 @@ export class Renderer {
     const ox = game.offset.x, oy = game.offset.y;
     for (let j = 0; j < n - 1; j++) {
       const k = (j + 1) / n;
-      out.push({ x: P[j].x + ox * k, y: P[j].y + oy * k, solid: P[j].solid });
+      out.push({ x: P[j].x + ox * k, y: P[j].y + oy * k, w: P[j].w, solid: P[j].solid });
     }
-    out.push({ x: head.x, y: head.y, solid: n ? P[n - 1].solid : !(game.me.fl[game.me.n - 1] & FLAG_GAP) });
+    const me = game.me;
+    out.push({ x: head.x, y: head.y, w: n ? P[n - 1].w : me.width(me.n - 1), solid: n ? P[n - 1].solid : !(me.fl[me.n - 1] & FLAG_GAP) });
     return out;
   }
 
@@ -240,11 +272,12 @@ export class Renderer {
       let ch = sn.chunks[k];
       if (!ch) ch = sn.chunks[k] = buildChunk(sn, k * CHUNK, (k + 1) * CHUNK);
       if (ch.x1 < v.x0 || ch.x0 > v.x1 || ch.y1 < v.y0 || ch.y0 > v.y1) continue;
-      ctx.stroke(ch.path);
+      ch.runs.stroke(ctx);
     }
+    // The newest part (and predicted/projected points) is drawn fresh each frame.
     const i0 = full * CHUNK;
-    ctx.beginPath();
-    let prevSolid = false;
+    const runs = new Runs();
+    let px = 0, py = 0, prevSolid = false, prevW = LINE_WIDTH;
     for (let i = i0; i <= limit; i++) {
       const solid = !(sn.fl[i] & FLAG_GAP);
       let x = sn.xs[i], y = sn.ys[i];
@@ -252,18 +285,54 @@ export class Renderer {
         const w = 1 - (limit - i) / 8;
         x += glide.vox * w; y += glide.voy * w;
       }
-      if (i > i0 && solid && prevSolid) ctx.lineTo(x, y);
-      else ctx.moveTo(x, y);
-      prevSolid = solid;
+      prevW = sn.width(i);
+      if (i > i0 && solid && prevSolid) runs.seg(px, py, x, y, prevW);
+      px = x; py = y; prevSolid = solid;
     }
     if (extra) {
       for (const p of extra) {
-        if (p.solid && prevSolid) ctx.lineTo(p.x, p.y);
-        else ctx.moveTo(p.x, p.y);
-        prevSolid = p.solid;
+        const w = p.w || prevW;
+        if (p.solid && prevSolid) runs.seg(px, py, p.x, p.y, w);
+        px = p.x; py = p.y; prevSolid = p.solid; prevW = w;
       }
     }
-    ctx.stroke();
+    runs.stroke(ctx);
+  }
+
+  drawItems(game, v, now) {
+    const ctx = this.ctx;
+    const pulse = 1 + Math.sin(now / 250) * 0.08;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const it of game.items.values()) {
+      if (it.x < v.x0 - 30 || it.x > v.x1 + 30 || it.y < v.y0 - 30 || it.y > v.y1 + 30) continue;
+      if (it.localPick && now - it.localPick < 800) continue; // we're picking it up
+      const def = POWERUPS[it.type];
+      const col = def.good ? GOOD : BAD;
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(it.x, it.y, ITEM_RADIUS * 1.6 * pulse, 0, TAU); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.arc(it.x, it.y, ITEM_RADIUS, 0, TAU); ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.font = `700 ${ITEM_RADIUS * 1.15}px system-ui, sans-serif`;
+      ctx.fillText(def.icon, it.x, it.y + 1);
+    }
+    // Floating "+SPEED" texts where something was picked up
+    game.popups = game.popups.filter((p) => now - p.at < 1200);
+    for (const p of game.popups) {
+      const k = (now - p.at) / 1200;
+      ctx.globalAlpha = 1 - k;
+      ctx.font = '800 16px system-ui, sans-serif';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(6,8,13,0.8)';
+      ctx.strokeText(p.text, p.x, p.y - 20 - k * 30);
+      ctx.fillStyle = p.good ? GOOD : BAD;
+      ctx.fillText(p.text, p.x, p.y - 20 - k * 30);
+    }
+    ctx.globalAlpha = 1;
+    ctx.textBaseline = 'alphabetic';
   }
 
   drawArrow(sn, x, y, a, isMe, now) {

@@ -9,6 +9,25 @@ and a zone closes in over time until one snake is left.
 Open the site, press **Play**, and you're in a match within a few seconds. Bots fill
 empty seats, so there's always a game, even when you're alone.
 
+## Power-ups
+
+Power-ups lie around the arena (fewer as the zone shrinks). Drive through one to
+collect it.
+
+| | Power-up | Effect | Time |
+| --- | --- | --- | --- |
+| Green (you) | ⚡ Speed | you move 1.6× faster | 5 s |
+| | 👻 Ghost | no line behind you, and you pass through lines (not the zone) | 3 s |
+| | │ Thin | your line is half as wide | 6 s |
+| Red (opponents near you) | » Fast | they move 1.6× faster | 4 s |
+| | ▬ Fat | their lines are twice as thick | 5 s |
+| | ⇄ Reverse | their left and right are swapped | 3.5 s |
+
+The same power-up stacks. Red ones hit opponents within about a screen's distance of
+the picker, not the whole map. An effect starts 0.27 s after the pickup, so every
+client knows about it before it kicks in, which keeps movement prediction exact.
+Bots steer toward power-ups that are close and safe to reach.
+
 ## Controls
 
 | Platform | Steer |
@@ -36,6 +55,7 @@ SIM_LAG_MS=75 SIM_JITTER_MS=40 npm start
 SIM_STALL_MS=150 npm start
 SIM_SPIKE_MS=550 SIM_SPIKE_EVERY_MS=15000 npm start   # connection goes silent now and then
 SIM_TCP_RTO=1 SIM_SPIKE_MS=300 npm start            # ...with TCP's re-send backoff
+SIM_ITEMS=100 npm start                             # lots of power-ups (testing)
 RTC_PORT=40000 SIM_UDP_LOSS=0.05 npm start          # WebRTC on, 5% UDP packet loss
 ```
 
@@ -162,7 +182,7 @@ server/          Node.js server (matchmaking, rooms, authoritative simulation, b
   re-send timers, which typically doubles the stall. Ticks that UDP lost are estimated
   right away and replaced by the real data when the WebSocket copy arrives. If UDP is
   blocked, the game quietly stays on WebSocket.
-* State updates are compact binary (17 bytes per snake per tick, including upcoming turns). Everything else is JSON.
+* State updates are compact binary (18 bytes per snake per tick, including upcoming turns and line width). Everything else is JSON.
 
 ### Match flow
 

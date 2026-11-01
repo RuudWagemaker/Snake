@@ -1,9 +1,10 @@
 import {
   TICK_RATE, MIN_PLAYERS, MAX_PLAYERS, LOBBY_SECONDS, NEXT_ROUND_LOBBY_SECONDS,
-  COUNTDOWN_SECONDS, END_SECONDS, HIT_DIST, KILLER_LEFT, COLORS, fieldRadius,
+  COUNTDOWN_SECONDS, END_SECONDS, KILLER_LEFT, COLORS, fieldRadius,
+  POWERUPS, POWERUP_TYPES, EFFECT_DELAY, ITEM_RADIUS, OTHERS_RANGE, LINE_WIDTH,
 } from '../public/shared/constants.js';
 import {
-  mulberry32, stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit,
+  mulberry32, stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt, hitDist,
 } from '../public/shared/sim.js';
 import { encodeTickBody, writeTickHeader, FLAG_GAP, FLAG_DIED, MAX_FUTURE } from '../public/shared/protocol.js';
 import { botThink, botName } from './bot.js';
@@ -14,6 +15,7 @@ const END_TICKS = END_SECONDS * TICK_RATE;
 // Bots decide their steering this many ticks ahead. Their path is then known in
 // advance, so clients can draw them "in the present" exactly, without guessing.
 const BOT_AHEAD = 8;
+const ITEM_CHECK_TICKS = 15;    // how often items are topped up / removed outside the zone
 
 function makeSpawns(rng, n, R0) {
   const spawns = [];
@@ -159,6 +161,9 @@ export class Room {
         deathTick: -1,
         gaps: new GapSchedule(seed, id),
         brain: null,
+        width: LINE_WIDTH,
+        ghost: false,
+        mods: {},
         botQueue: client ? null : new Array(BOT_AHEAD).fill(0), // decided turns for the next ticks
       };
       players.push(p);
@@ -177,12 +182,20 @@ export class Room {
       tick: 0,
       playTick: COUNTDOWN_TICKS,
       aliveCount: n,
+      items: [],          // power-ups on the field: {id, type, x, y}
+      nextItemId: 1,
+      effects: [],        // active power-up effects: {type, start, end, targets}
+      // SIM_ITEMS: dev/testing override for the number of power-ups on the field
+      itemTarget: Number(process.env.SIM_ITEMS) || Math.max(6, Math.min(18, n)),
+      rng: mulberry32(seed ^ 0x51ed27),
     };
     this.state = 'playing';
+    const zone0 = zoneAt(this.round.plan, 0);
+    for (let i = 0; i < this.round.itemTarget; i++) this.spawnItem(zone0);
 
     const info = players.map((p) => ({ id: p.id, name: p.name, color: p.color, bot: p.bot, x: p.x, y: p.y, a: p.a }));
     for (const c of this.clients) {
-      c.send({ t: 'start', you: c.player.id, seed, R0, playTick: this.round.playTick, tick: 0, players: info });
+      c.send({ t: 'start', you: c.player.id, seed, R0, playTick: this.round.playTick, tick: 0, players: info, items: this.round.items });
     }
   }
 
@@ -208,31 +221,36 @@ export class Room {
         p.turn = p.botQueue.length ? p.botQueue.shift() : 0;
       }
     }
+    // Power-up modifiers for this tick (speed, line width, reversed steering, ghost)
+    for (const p of r.players) if (p.alive) modsAt(r.effects, p.id, t, p.mods);
 
     // 2. Movement + trail
     const deaths = new Map();
     if (moving) {
       for (const p of r.players) {
         if (!p.alive) continue;
-        const px = p.x, py = p.y;
-        stepSnake(p, p.turn);
-        const solid = !p.gaps.isGap(zt);
-        if (solid && p.solid) r.grid.add(px, py, p.x, p.y, p.id, t);
+        const px = p.x, py = p.y, m = p.mods;
+        stepSnake(p, m.reverse ? -p.turn : p.turn, m.speed);
+        const solid = !p.gaps.isGap(zt) && !m.ghost;
+        if (solid && p.solid) r.grid.add(px, py, p.x, p.y, p.id, t, m.width);
         p.solid = solid;
+        p.width = m.width;
+        p.ghost = m.ghost;
       }
 
       // 3. Collisions (after everyone moved, so head-on crashes kill both)
       for (const p of r.players) {
         if (!p.alive) continue;
-        const k = checkHit(r.grid, zone, p.x, p.y, p.id, t);
+        const k = checkHit(r.grid, zone, p.x, p.y, p.id, t, p.width, p.ghost);
         if (k !== null) deaths.set(p, k);
       }
       const alive = r.players.filter((p) => p.alive);
       for (let i = 0; i < alive.length; i++) {
         for (let j = i + 1; j < alive.length; j++) {
           const a = alive[i], b = alive[j];
-          const dx = a.x - b.x, dy = a.y - b.y;
-          if (dx * dx + dy * dy < HIT_DIST * HIT_DIST) {
+          if (a.ghost || b.ghost) continue;
+          const dx = a.x - b.x, dy = a.y - b.y, d = hitDist(a.width, b.width);
+          if (dx * dx + dy * dy < d * d) {
             if (!deaths.has(a)) deaths.set(a, b.id);
             if (!deaths.has(b)) deaths.set(b, a.id);
           }
@@ -240,7 +258,11 @@ export class Room {
       }
     }
 
-    if (moving) this.planBots(deaths, t);
+    if (moving) {
+      this.pickups(deaths, t);
+      if (t % ITEM_CHECK_TICKS === 0) this.maintainItems(zone, t);
+      this.planBots(deaths, t);
+    }
 
     r.tick = t;
     for (const p of deaths.keys()) p.deathTick = t;
@@ -259,12 +281,78 @@ export class Room {
     const r = this.round;
     for (const p of r.players) {
       if (!p.bot || !p.alive || deaths.has(p)) continue;
-      const v = { id: p.id, x: p.x, y: p.y, a: p.a, brain: p.brain };
-      for (const q of p.botQueue) stepSnake(v, q);
+      const v = { id: p.id, x: p.x, y: p.y, a: p.a, brain: p.brain, speed: 1 };
+      const m = {};
+      for (let k = 0; k < p.botQueue.length; k++) {
+        modsAt(r.effects, p.id, t + 1 + k, m);
+        stepSnake(v, m.reverse ? -p.botQueue[k] : p.botQueue[k], m.speed);
+      }
       const T = t + p.botQueue.length + 1;
       const zt = T - r.playTick;
-      p.botQueue.push(botThink(v, r, zoneAt(r.plan, zt), zt, T));
+      modsAt(r.effects, p.id, T, m);
+      v.speed = m.speed;
+      const intended = botThink(v, r, zoneAt(r.plan, zt), zt, T);
+      // Steering is reversed for everyone under "reverse"; bots compensate.
+      p.botQueue.push(m.reverse ? -intended : intended);
       p.brain = v.brain;
+    }
+  }
+
+  // ---- power-ups -----------------------------------------------------------
+
+  spawnItem(zone) {
+    const r = this.round;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const ang = r.rng() * Math.PI * 2;
+      const d = Math.sqrt(r.rng()) * zone.r * 0.85;
+      const x = zone.x + Math.cos(ang) * d, y = zone.y + Math.sin(ang) * d;
+      // not on a line, not right in front of anyone, not on another item
+      if (r.grid.hit(x, y, ITEM_RADIUS * 3, -1, 0) !== -2) continue;
+      if (r.players.some((p) => p.alive && Math.hypot(p.x - x, p.y - y) < 120)) continue;
+      if (r.items.some((it) => Math.hypot(it.x - x, it.y - y) < 150)) continue;
+      const type = POWERUP_TYPES[Math.floor(r.rng() * POWERUP_TYPES.length)];
+      const item = { id: r.nextItemId++, type, x: Math.round(x), y: Math.round(y) };
+      r.items.push(item);
+      return item;
+    }
+    return null;
+  }
+
+  /** Remove items the zone has swallowed, and top up to the target count. */
+  maintainItems(zone, t) {
+    const r = this.round;
+    const rem = [];
+    r.items = r.items.filter((it) => {
+      const inside = Math.hypot(it.x - zone.x, it.y - zone.y) < zone.r - ITEM_RADIUS;
+      if (!inside) rem.push(it.id);
+      return inside;
+    });
+    // fewer items as the field shrinks
+    const target = Math.min(r.itemTarget, Math.max(1, Math.round(r.itemTarget * zone.r / r.R0)));
+    const add = [];
+    if (r.items.length < target && zone.r > 150) {
+      const it = this.spawnItem(zone);
+      if (it) add.push(it);
+    }
+    r.effects = r.effects.filter((e) => e.end > t);
+    if (add.length || rem.length) this.broadcast({ t: 'items', add, rem });
+  }
+
+  pickups(deaths, t) {
+    const r = this.round;
+    for (let i = r.items.length - 1; i >= 0; i--) {
+      const it = r.items[i];
+      const p = r.players.find((q) => q.alive && !deaths.has(q) &&
+        Math.hypot(q.x - it.x, q.y - it.y) < ITEM_RADIUS + q.width / 2);
+      if (!p) continue;
+      r.items.splice(i, 1);
+      const def = POWERUPS[it.type];
+      const targets = def.good
+        ? [p.id]
+        : r.players.filter((q) => q !== p && q.alive && !deaths.has(q) && Math.hypot(q.x - p.x, q.y - p.y) < OTHERS_RANGE).map((q) => q.id);
+      const start = t + EFFECT_DELAY, end = start + Math.round(def.secs * TICK_RATE);
+      if (targets.length) r.effects.push({ type: it.type, start, end, targets });
+      this.broadcast({ t: 'pickup', item: it.id, type: it.type, by: p.id, x: it.x, y: it.y, start, end, targets });
     }
   }
 
@@ -291,6 +379,7 @@ export class Room {
           id: p.id, x: p.x, y: p.y, a: p.a,
           flags: (p.solid ? 0 : FLAG_GAP) | (p.deathTick === t ? FLAG_DIED : 0),
           future: !p.alive ? null : p.bot ? p.botQueue.slice(0, MAX_FUTURE) : p.client ? p.client.inputs.upcoming(t, MAX_FUTURE) : null,
+          width: p.width,
         });
       }
     }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, mulberry32 } from '../public/shared/sim.js';
+import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, mulberry32, modsAt } from '../public/shared/sim.js';
 import { encodeInput, decodeInput, encodeInputs, decodeInputList, encodeTickBody, writeTickHeader, decodeTick } from '../public/shared/protocol.js';
 import { SPEED, DT, GAP_LEN_TICKS, KILLER_ZONE, fieldRadius } from '../public/shared/constants.js';
 
@@ -57,6 +57,37 @@ test('collision: trails, own neck, zone', () => {
   assert.equal(checkHit(g, zone, 999, 0, 1, 200), KILLER_ZONE);
 });
 
+test('power-up modifiers: timing, targets and stacking', () => {
+  const fx = [
+    { type: 'speed', start: 10, end: 20, targets: [1] },
+    { type: 'fast', start: 15, end: 30, targets: [1, 2] },
+    { type: 'fat', start: 10, end: 20, targets: [2] },
+    { type: 'fat', start: 10, end: 20, targets: [2] },
+    { type: 'fat', start: 10, end: 20, targets: [2] },
+    { type: 'reverse', start: 12, end: 14, targets: [2] },
+    { type: 'ghost', start: 5, end: 6, targets: [1] },
+  ];
+  assert.equal(modsAt(fx, 1, 9).speed, 1);
+  assert.equal(modsAt(fx, 1, 10).speed, 1.6);
+  assert.ok(Math.abs(modsAt(fx, 1, 16).speed - 2.56) < 1e-9); // stacked
+  assert.equal(modsAt(fx, 1, 20).speed, 1.6);                // end is exclusive
+  assert.equal(modsAt(fx, 2, 11).width, 18);                 // 6*2*2*2 capped
+  assert.equal(modsAt(fx, 2, 13).reverse, true);
+  assert.equal(modsAt(fx, 2, 14).reverse, false);
+  assert.equal(modsAt(fx, 1, 5).ghost, true);
+  assert.equal(modsAt(fx, 3, 15).speed, 1);                  // not a target
+});
+
+test('collisions respect line width and ghosts', () => {
+  const g = new SegGrid();
+  g.add(-50, 0, 50, 0, 7, 100, 18);  // a fat line
+  const zone = { x: 0, y: 0, r: 1000 };
+  assert.equal(checkHit(g, zone, 0, 10, 1, 200), 7);              // fat line reaches further
+  assert.equal(checkHit(g, zone, 0, 14, 1, 200), null);
+  assert.equal(checkHit(g, zone, 0, 3, 1, 200, 6, true), null);   // ghosts pass through
+  assert.equal(checkHit(g, zone, 999, 0, 1, 200, 6, true), -1);   // ...but not through the zone
+});
+
 test('binary protocol round trip', () => {
   const inp = decodeInput(new Uint8Array(encodeInput(123456, -1)));
   assert.deepEqual(inp, { tick: 123456, turn: -1 });
@@ -66,7 +97,7 @@ test('binary protocol round trip', () => {
   assert.equal(d.tick, 777);
   assert.equal(d.lastInput, 780);
   assert.equal(d.starved, false);
-  assert.deepEqual(d.entries[0], { id: 5, x: 1.5, y: -2.25, a: 0.5, flags: 3, future: [1, 0, -1, -1] });
+  assert.deepEqual(d.entries[0], { id: 5, x: 1.5, y: -2.25, a: 0.5, flags: 3, future: [1, 0, -1, -1], width: 6 });
   assert.equal(d.entries[1].future, null);
   assert.equal(d.entries[1].id, 9);
   writeTickHeader(body, 778, 779, true);

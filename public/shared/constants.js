@@ -42,6 +42,25 @@ export const ZONE_PHASES = [
 
 export const GRID_CELL = 48;
 
+// Power-ups. Green ones help the picker; red ones hit opponents near the picker.
+// Effects start EFFECT_DELAY ticks after the pickup, so every client knows about
+// them before they kick in (keeps prediction exact).
+export const POWERUPS = {
+  speed:   { good: true,  secs: 5,   label: 'Speed',   icon: '\u26A1' },
+  ghost:   { good: true,  secs: 3,   label: 'Ghost',   icon: '\u{1F47B}' },
+  thin:    { good: true,  secs: 6,   label: 'Thin',    icon: '\u2502' },
+  fast:    { good: false, secs: 4,   label: 'Fast',    icon: '\u00BB' },
+  fat:     { good: false, secs: 5,   label: 'Fat',     icon: '\u25AC' },
+  reverse: { good: false, secs: 3.5, label: 'Reverse', icon: '\u21C4' },
+};
+export const POWERUP_TYPES = Object.keys(POWERUPS);
+export const EFFECT_DELAY = 8;            // ticks between pickup and effect
+export const ITEM_RADIUS = 13;
+export const OTHERS_RANGE = 900;          // red effects hit opponents within this distance
+export const SPEED_MUL = 1.6;
+export const MIN_WIDTH = 2;
+export const MAX_WIDTH = 18;
+
 // Special "killer" ids in death events
 export const KILLER_ZONE = -1;
 export const KILLER_LEFT = -3;

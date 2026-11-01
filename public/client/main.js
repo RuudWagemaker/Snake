@@ -13,7 +13,7 @@ const ui = {
   lobbyText: $('lobby-text'), lobbySub: $('lobby-sub'),
   deadTitle: $('dead-title'), deadSub: $('dead-sub'),
   endTitle: $('end-title'), ranking: $('ranking'), endSub: $('end-sub'),
-  alive: $('alive'), kills: $('kills'), zoneInfo: $('zone-info'), feed: $('feed'),
+  alive: $('alive'), kills: $('kills'), zoneInfo: $('zone-info'), feed: $('feed'), effects: $('effects'),
   center: $('center-msg'), touchL: $('touch-left'), touchR: $('touch-right'),
 };
 
@@ -146,7 +146,16 @@ function feed(html) {
   setTimeout(() => div.remove(), 5000);
 }
 
+let flashUntil = 0;
 game.onEvent = (ev) => {
+  if (ev.type === 'pickup') {
+    if (ev.hitsMe && !ev.def.good) {
+      // an opponent's red power-up hit us: make it impossible to miss
+      ui.center.innerHTML = `<span style="color:#ff6b81;font-size:0.6em">${ev.def.icon} ${ev.def.label.toUpperCase()}!</span><small>from ${esc(ev.by ? ev.by.name : '?')}</small>`;
+      flashUntil = performance.now() + 1300;
+    }
+    return;
+  }
   if (ev.type !== 'death') return;
   const s = ev.snake;
   const me = s === game.me;
@@ -220,6 +229,8 @@ net.onJson = (m) => {
       game.start(m);
       spectateId = null;
       ui.feed.innerHTML = '';
+      ui.effects.innerHTML = '';
+      flashUntil = 0;
       setMode('game');
       cam.x = game.me.xs[0];
       cam.y = game.me.ys[0];
@@ -227,6 +238,12 @@ net.onJson = (m) => {
       break;
     case 'death':
       if (game.active) game.onDeath(m);
+      break;
+    case 'items':
+      if (game.active) game.onItems(m);
+      break;
+    case 'pickup':
+      if (game.active) game.onPickup(m);
       break;
     case 'end':
       if (!game.active) return;
@@ -335,6 +352,7 @@ function frame(now) {
   const toGo = (game.playTick - serverTick) / TICK_RATE;
   if (toGo > 0) ui.center.innerHTML = `${Math.ceil(toGo)}<small>${isTouch ? 'hold left / right to steer' : '← → to steer'}</small>`;
   else if (toGo > -0.8) ui.center.textContent = 'GO!';
+  else if (now < flashUntil) { /* showing a power-up warning */ }
   else if (ui.center.innerHTML) ui.center.innerHTML = '';
 
   // Touch hints
@@ -352,6 +370,10 @@ function frame(now) {
 }
 
 function updateHud(zone, serverTick) {
+  const fx = game.controlling ? game.myEffects(performance.now()) : [];
+  ui.effects.innerHTML = fx.map((e) =>
+    `<div class="fx ${e.def.good ? 'good' : 'bad'}${e.pending ? ' pending' : ''}">${e.def.icon} ${e.def.label} ${Math.ceil(e.left)}s` +
+    `<i style="width:${Math.max(0, Math.min(100, (100 * e.left) / e.total))}%"></i></div>`).join('');
   ui.alive.textContent = `\u{1F40D} ${game.aliveCount} / ${game.total} alive`;
   const k = game.me ? game.me.kills : 0;
   const ms = Math.round(net.rtt);

@@ -17,8 +17,8 @@
 //    glide in. While spectating they're shown slightly in the past and
 //    interpolated (smoothest). Either way, if updates stop for a moment they
 //    keep moving instead of freezing.
-import { TICK_MS, TURN_RATE, DT } from '../shared/constants.js';
-import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit } from '../shared/sim.js';
+import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, ITEM_RADIUS, POWERUPS } from '../shared/constants.js';
+import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt } from '../shared/sim.js';
 import { FLAG_GAP, FLAG_DIED, encodeInput, encodeInputs } from '../shared/protocol.js';
 
 const MIN_INTERP = 2;       // remote snakes are shown at least this many ticks in the past
@@ -50,6 +50,7 @@ export class Snake {
     this.as = new Float32Array(this.cap);
     this.fl = new Uint8Array(this.cap);
     this.prov = new Uint8Array(this.cap); // 1 = estimated point, real data still on its way
+    this.ws = new Uint8Array(this.cap);   // line width x10 of the segment ending at this point
     this.n = 0;
     this.firstTick = 0;
     this.alive = true;
@@ -66,7 +67,7 @@ export class Snake {
   get lastTick() { return this.firstTick + this.n - 1; }
 
   /** Append the point for the next tick (ticks are contiguous). */
-  append(tick, x, y, a, f, prov = 0) {
+  append(tick, x, y, a, f, prov = 0, w = LINE_WIDTH) {
     if (this.n === 0) this.firstTick = tick;
     if (this.n === this.cap) {
       this.cap *= 2;
@@ -75,7 +76,7 @@ export class Snake {
         arr.set(this[k]);
         this[k] = arr;
       }
-      for (const k of ['fl', 'prov']) {
+      for (const k of ['fl', 'prov', 'ws']) {
         const arr = new Uint8Array(this.cap);
         arr.set(this[k]);
         this[k] = arr;
@@ -83,12 +84,16 @@ export class Snake {
     }
     const i = this.n++;
     this.xs[i] = x; this.ys[i] = y; this.as[i] = a; this.fl[i] = f; this.prov[i] = prov;
+    this.ws[i] = Math.round(w * 10);
   }
 
+  width(i) { return this.ws[i] / 10; }
+
   /** Replace an estimated point with real data. Returns true if it changed something. */
-  fill(i, x, y, a, f) {
+  fill(i, x, y, a, f, w = LINE_WIDTH) {
     if (!this.prov[i]) return false;
     this.xs[i] = x; this.ys[i] = y; this.as[i] = a; this.fl[i] = f; this.prov[i] = 0;
+    this.ws[i] = Math.round(w * 10);
     // cached trail pieces containing this point must be rebuilt
     delete this.chunks[Math.floor(i / CHUNK)];
     if (i % CHUNK === 0 && i > 0) delete this.chunks[i / CHUNK - 1];
@@ -138,6 +143,10 @@ export class ClientGame {
     this.me = this.snakes.get(this.myId);
     this.grid = new SegGrid();
     this.latestTick = msg.tick;
+    this.items = new Map((msg.items || []).map((it) => [it.id, it]));
+    this.effects = [];        // power-up effects {type, start, end, targets}
+    this.popups = [];         // floating pickup texts {x, y, text, good, at}
+    this.tmpMods = {};
 
     // prediction state
     this.controlling = !!this.me;
@@ -208,10 +217,10 @@ export class ClientGame {
         let da = e.a - s.as[i];
         if (da > Math.PI) da -= Math.PI * 2; else if (da < -Math.PI) da += Math.PI * 2;
         const fl = t > this.playTick && s.gaps.isGap(t - this.playTick) ? FLAG_GAP : 0;
-        s.append(t, s.xs[i] + (e.x - s.xs[i]) * f, s.ys[i] + (e.y - s.ys[i]) * f, s.as[i] + da * f, fl, 1);
+        s.append(t, s.xs[i] + (e.x - s.xs[i]) * f, s.ys[i] + (e.y - s.ys[i]) * f, s.as[i] + da * f, fl, 1, s.width(i));
         this.addSegment(s, t);
       }
-      s.append(d.tick, e.x, e.y, e.a, e.flags);
+      s.append(d.tick, e.x, e.y, e.a, e.flags, 0, e.width || LINE_WIDTH);
       this.addSegment(s, d.tick);
       s.future = e.future;          // turns for ticks d.tick+1 ... (may be null)
       s.futureFrom = d.tick + 1;
@@ -260,7 +269,7 @@ export class ClientGame {
   addSegment(s, tick) {
     const i = s.n - 1;
     if (tick > this.playTick && i > 0 && !(s.fl[i] & FLAG_GAP) && !(s.fl[i - 1] & FLAG_GAP)) {
-      this.grid.add(s.xs[i - 1], s.ys[i - 1], s.xs[i], s.ys[i], s.id, tick);
+      this.grid.add(s.xs[i - 1], s.ys[i - 1], s.xs[i], s.ys[i], s.id, tick, s.width(i));
     }
   }
 
@@ -272,8 +281,8 @@ export class ClientGame {
       const i = d.tick - s.firstTick;
       if (i === s.n) {
         // a snake that just died: its final tick only came through this copy
-        s.append(d.tick, e.x, e.y, e.a, e.flags);
-      } else if (i >= 0 && i < s.n && s.fill(i, e.x, e.y, e.a, e.flags)) {
+        s.append(d.tick, e.x, e.y, e.a, e.flags, 0, e.width || LINE_WIDTH);
+      } else if (i >= 0 && i < s.n && s.fill(i, e.x, e.y, e.a, e.flags, e.width || LINE_WIDTH)) {
         this.stats.filled++;
       }
       if (e.flags & FLAG_DIED) {
@@ -332,6 +341,37 @@ export class ClientGame {
     }
     this.onEvent({ type: 'death', snake: s, killer: k || null, killerId: m.killer, msg: m });
   }
+
+  onItems(m) {
+    for (const id of m.rem || []) this.items.delete(id);
+    for (const it of m.add || []) this.items.set(it.id, it);
+  }
+
+  onPickup(m) {
+    this.items.delete(m.item);
+    if (m.targets.length) this.effects.push({ type: m.type, start: m.start, end: m.end, targets: m.targets });
+    this.effects = this.effects.filter((e) => e.end > this.latestTick - 30);
+    const def = POWERUPS[m.type];
+    const by = this.snakes.get(m.by);
+    this.popups.push({ x: m.x, y: m.y, text: (def.good ? '+' : '') + def.label.toUpperCase(), good: def.good, at: performance.now() });
+    this.onEvent({ type: 'pickup', msg: m, def, by, hitsMe: m.targets.includes(this.myId) });
+  }
+
+  /** Power-up effects on our snake right now: [{type, def, left (s), total (s), pending}] */
+  myEffects(now) {
+    const t = this.serverTickNow(now);
+    const byType = new Map(); // one entry per type (picking up the same one twice stacks)
+    for (const e of this.effects) {
+      if (e.end <= t || !e.targets.includes(this.myId)) continue;
+      const left = (e.end - Math.max(t, e.start)) / 30;
+      const cur = byType.get(e.type);
+      if (!cur || left > cur.left) byType.set(e.type, { type: e.type, def: POWERUPS[e.type], left, total: (e.end - e.start) / 30, pending: t < e.start });
+    }
+    return [...byType.values()];
+  }
+
+  /** Current modifiers of any snake (for drawing). */
+  modsNow(s, tick, out) { return modsAt(this.effects, s.id, tick, out); }
 
   onEnd(m) {
     this.ended = true;
@@ -407,15 +447,20 @@ export class ClientGame {
       const tt = ++this.predTick;
       // A skipped tick (rare: after a resync) repeats the previous turn, like the server does.
       const tr = tt === t ? turn : this.lastTurn;
+      const m = modsAt(this.effects, this.myId, tt, this.tmpMods);
       if (!this.predStopped && tt > this.playTick) {
-        stepSnake(p, tr);
+        stepSnake(p, m.reverse ? -tr : tr, m.speed);
         // Stop at an obvious crash instead of sliding through a line while we
         // wait for the server's verdict.
-        if (checkHit(this.grid, zoneAt(this.plan, tt - this.playTick), p.x, p.y, this.myId, tt) !== null) {
+        if (checkHit(this.grid, zoneAt(this.plan, tt - this.playTick), p.x, p.y, this.myId, tt, m.width, m.ghost) !== null) {
           this.predStopped = true;
         }
+        // Hide a power-up we're about to collect (the server confirms it shortly).
+        for (const it of this.items.values()) {
+          if (Math.hypot(it.x - p.x, it.y - p.y) < ITEM_RADIUS + m.width / 2) it.localPick = performance.now();
+        }
       }
-      this.path.push({ x: p.x, y: p.y, a: p.a, t: tt, solid: tt <= this.playTick || !this.myGaps.isGap(tt - this.playTick) });
+      this.path.push({ x: p.x, y: p.y, a: p.a, t: tt, w: m.width, solid: !m.ghost && (tt <= this.playTick || !this.myGaps.isGap(tt - this.playTick)) });
     }
     this.lastTurn = turn;
   }
@@ -502,25 +547,27 @@ export class ClientGame {
     const st = { x: s.xs[i], y: s.ys[i], a: s.as[i] };
     const pts = [];
     const whole = Math.floor(k);
-    const solidAt = (t) => t <= this.playTick || !s.gaps.isGap(t - this.playTick);
+    const m = this.tmpExMods || (this.tmpExMods = {});
+    const solidAt = (t) => !m.ghost && (t <= this.playTick || !s.gaps.isGap(t - this.playTick));
     // One zone lookup: the zone at the end is the strictest (it only shrinks).
     const zone = zoneAt(this.plan, s.lastTick + whole + 1 - this.playTick);
     for (let j = 1; j <= whole + 1; j++) {
       const t = s.lastTick + j;
       const nx = { x: st.x, y: st.y, a: st.a };
-      if (t > this.playTick) stepSnake(nx, turnAt(j));
-      if (t > this.playTick && checkHit(this.grid, zone, nx.x, nx.y, s.id, t) !== null) {
+      modsAt(this.effects, s.id, t, m);
+      if (t > this.playTick) stepSnake(nx, m.reverse ? -turnAt(j) : turnAt(j), m.speed);
+      if (t > this.playTick && checkHit(this.grid, zone, nx.x, nx.y, s.id, t, m.width, m.ghost) !== null) {
         return { pts, head: st };
       }
       if (j > whole) {
         // fractional last step
         const f = k - whole;
         const head = { x: st.x + (nx.x - st.x) * f, y: st.y + (nx.y - st.y) * f, a: nx.a };
-        if (f > 0) pts.push({ x: head.x, y: head.y, solid: solidAt(t) });
+        if (f > 0) pts.push({ x: head.x, y: head.y, w: m.width, solid: solidAt(t) });
         return { pts, head };
       }
       st.x = nx.x; st.y = nx.y; st.a = nx.a;
-      pts.push({ x: st.x, y: st.y, solid: solidAt(t) });
+      pts.push({ x: st.x, y: st.y, w: m.width, solid: solidAt(t) });
     }
     return { pts, head: st };
   }

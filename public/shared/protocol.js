@@ -7,7 +7,7 @@
 // INPUTS (client -> server over UDP), 6 + n bytes:
 //   u8 type=3 | u32 lastTick | u8 n | n * i8 turn (for ticks lastTick-n+1 .. lastTick)
 //   Every UDP packet repeats the recent inputs, so a lost packet costs nothing.
-// TICK   (server -> client), 11 + 17*n bytes:
+// TICK   (server -> client), 11 + 18*n bytes:
 //   u8 type=2 | u32 tick | u32 lastInput | u8 flags | u8 count | count * entry
 //   lastInput: newest input tick received from this client
 //   flags: bit7 = this client's input for `tick` was missing (arrived late)
@@ -15,6 +15,7 @@
 //          | u8 n | u16 turns: the snake's next n turns (n <= 8, 2 bits each, turn+1),
 //            already decided (bots plan ahead, players' inputs arrive early). Lets
 //            clients draw other snakes slightly ahead in time without guessing.
+//          | u8 width*10: line width on this tick (power-ups change it)
 
 export const MSG_INPUT = 1;
 export const MSG_TICK = 2;
@@ -22,7 +23,7 @@ export const MSG_INPUTS = 3;
 export const FLAG_GAP = 1;
 export const FLAG_DIED = 2;
 export const TICK_HEADER = 11;
-export const TICK_ENTRY = 17;
+export const TICK_ENTRY = 18;
 export const MAX_FUTURE = 8;
 
 export function encodeInput(tick, turn) {
@@ -90,6 +91,7 @@ export function encodeTickBody(entries) {
     for (let i = 0; i < n; i++) packed |= (fut[i] + 1) << (2 * i);
     v.setUint8(o + 14, n);
     v.setUint16(o + 15, packed);
+    v.setUint8(o + 17, Math.max(0, Math.min(255, Math.round((e.width ?? 6) * 10))));
     o += TICK_ENTRY;
   }
   return out;
@@ -117,6 +119,7 @@ export function decodeTick(arrayBuffer) {
       a: v.getFloat32(o + 9),
       flags: v.getUint8(o + 13),
       future: null,
+      width: v.getUint8(o + 17) / 10,
     };
     const n = Math.min(MAX_FUTURE, v.getUint8(o + 14));
     if (n) {
