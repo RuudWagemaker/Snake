@@ -111,6 +111,7 @@ function join() {
 }
 
 ui.name.value = savedName();
+$('version').textContent = BUILD && !BUILD.includes('%') ? `version ${BUILD.slice(0, 7)}` : '';
 ui.play.addEventListener('click', join);
 ui.name.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !ui.play.disabled) join(); });
 $('again').addEventListener('click', join);
@@ -458,6 +459,7 @@ const diag = {
     const sh = this.shown;
     const pingMax = sh.ping || 0;
     let out =
+      `<b>Version</b> ${BUILD.slice(0, 7)}\n` +
       `<b>Device </b> ${sh.fps} fps, slowest frame ${c(sh.frame, 100)} ms\n` +
       `<b>Network</b> ${net.udpOpen ? 'UDP' : 'WebSocket'}, ping ${Math.round(net.rtt)} ms (worst ${c(pingMax, 150)})\n` +
       `<b>Gaps   </b> download ${c(sh.gap, 150)} ms, upload ${c(this.srv.up || 0, 150)} ms\n` +
