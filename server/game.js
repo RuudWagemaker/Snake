@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { WebSocket } from 'ws';
 import { TICK_MS } from '../public/shared/constants.js';
 import { decodeInputList } from '../public/shared/protocol.js';
@@ -185,6 +186,25 @@ export class GameServer {
     this.stepTotal = 0;
     this.stepCount = 0;
     this.lastWarn = 0;
+    this.lastCpuWarn = 0;
+    this.cpuMark = { at: performance.now(), proc: process.cpuUsage(), sys: machineTimes() };
+  }
+
+  /**
+   * CPU since the last call, in Hetzner's units (100% = one core): this game
+   * process, and the whole machine (all processes; /proc/stat isn't namespaced,
+   * so this works inside Docker too).
+   */
+  measureCpu() {
+    const now = performance.now(), proc = process.cpuUsage(), sys = machineTimes();
+    const m = this.cpuMark;
+    const ms = Math.max(1, now - m.at);
+    const game = ((proc.user - m.proc.user + proc.system - m.proc.system) / 1000 / ms) * 100;
+    const total = sys.total - m.sys.total, idle = sys.idle - m.sys.idle;
+    const cores = os.cpus().length;
+    const machine = total > 0 ? ((total - idle) / total) * 100 * cores : 0;
+    this.cpuMark = { at: now, proc, sys };
+    return { game: Math.round(game), machine: Math.round(machine), cores };
   }
 
   onConnection(ws) {
@@ -234,7 +254,15 @@ export class GameServer {
   /** Every 2 s: tell players how healthy the server is, and log hiccups. */
   reportStats() {
     const lag = Math.round(this.maxLag);
+    const cpu = this.measureCpu();
+    if (cpu.machine > 80 && cpu.machine > cpu.game * 3 && Date.now() - this.lastCpuWarn > 60000) {
+      this.lastCpuWarn = Date.now();
+      console.warn(`[cpu] the server is busy (${cpu.machine}% of ${cpu.cores * 100}%) but the game itself uses only ${cpu.game}%: something else on this machine is using the CPU.`);
+    }
     const stats = {
+      cpu: cpu.game,          // this game server, % of one core
+      cpuAll: cpu.machine,    // whole machine, % of one core (max cores*100)
+      cores: cpu.cores,
       t: 'stats',
       lag,                                                     // worst loop delay (ms)
       step: +(this.stepTotal / Math.max(1, this.stepCount)).toFixed(2), // avg tick cost (ms)
@@ -296,4 +324,14 @@ export class GameServer {
     clearInterval(this.statsTimer);
     clearInterval(this.stallTimer);
   }
+}
+
+function machineTimes() {
+  let total = 0, idle = 0;
+  for (const c of os.cpus()) {
+    const t = c.times;
+    total += t.user + t.nice + t.sys + t.idle + t.irq;
+    idle += t.idle;
+  }
+  return { total, idle };
 }

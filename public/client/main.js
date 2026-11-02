@@ -462,6 +462,7 @@ const diag = {
       `<b>Network</b> ${net.udpOpen ? 'UDP' : 'WebSocket'}, ping ${Math.round(net.rtt)} ms (worst ${c(pingMax, 150)})\n` +
       `<b>Gaps   </b> download ${c(sh.gap, 150)} ms, upload ${c(this.srv.up || 0, 150)} ms\n` +
       `<b>Server </b> hiccup ${c(this.srv.lag, 80)} ms, tick ${this.srv.step} ms (worst ${this.srv.maxStep})\n` +
+      (this.srv.cores ? `<b>CPU    </b> game ${c(this.srv.cpu, 50)}%, whole server ${c(this.srv.cpuAll, 70 * this.srv.cores)}% of ${this.srv.cores * 100}%\n` : '') +
       `<b>You    </b> late inputs ${st.late}, corrections ${st.corrections}, lead ${game.lead ? Math.round(game.lead) : 0} (+${game.margin || 0})` +
       (net.udpOpen ? `\n<b>UDP    </b> ${Math.round(100 * st.viaUdp / Math.max(1, st.viaUdp + st.viaWs))}% of updates first via UDP, ${st.filled} filled in` : '');
     if (this.spikes.length) {
