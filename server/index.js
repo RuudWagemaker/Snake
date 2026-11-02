@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { GameServer } from './game.js';
 import { initRtc } from './rtc.js';
+import { Stats } from './stats.js';
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public');
 
@@ -67,11 +68,12 @@ async function serveStatic(req, res) {
   }
 }
 
-export async function startServer({ port = 3000, host } = {}) {
+export async function startServer({ port = 3000, host, statsFile = null } = {}) {
   await initRtc();
   const server = http.createServer(serveStatic);
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096, perMessageDeflate: false });
-  const game = new GameServer(BUILD);
+  const stats = new Stats(statsFile);
+  const game = new GameServer(BUILD, stats);
   wss.on('connection', (ws) => game.onConnection(ws));
   game.start();
   return new Promise((resolve) => {
@@ -81,6 +83,7 @@ export async function startServer({ port = 3000, host } = {}) {
         game,
         close: () => new Promise((r) => {
           game.stop();
+          stats.saveNow();
           for (const ws of wss.clients) ws.terminate();
           wss.close();
           server.close(() => r());
@@ -92,7 +95,12 @@ export async function startServer({ port = 3000, host } = {}) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT) || 3000;
-  startServer({ port, host: process.env.HOST || undefined }).then(({ port }) => {
-    console.log(`Curve Royale (build ${BUILD}) running on http://localhost:${port}`);
+  // STATS_FILE: where player profiles and leaderboards are kept (unset = memory only)
+  const statsFile = process.env.STATS_FILE || null;
+  startServer({ port, host: process.env.HOST || undefined, statsFile }).then(({ port, game }) => {
+    console.log(`Curve Royale (build ${BUILD}) running on http://localhost:${port}` +
+      (statsFile ? `, stats in ${statsFile}` : ', stats in memory only (set STATS_FILE to keep them)'));
+    // Save the stats before a restart (docker stop sends SIGTERM).
+    for (const sig of ['SIGTERM', 'SIGINT']) process.once(sig, () => { game.stats.saveNow(); process.exit(0); });
   });
 }

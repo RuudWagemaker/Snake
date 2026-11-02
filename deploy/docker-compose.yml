@@ -10,6 +10,8 @@ services:
       PORT: 3000
       RTC_PORT: ${RTC_PORT:-40000} # UDP port for WebRTC (open it in the firewall)
       RTC_PUBLIC_IP: ${RTC_PUBLIC_IP:-}
+    volumes:
+      - game_data:/data            # player profiles and leaderboards (survives redeploys)
     logging:
       options: { max-size: "10m", max-file: "3" }
 
@@ -28,5 +30,6 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
 volumes:
+  game_data:
   caddy_data:
   caddy_config:

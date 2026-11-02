@@ -8,7 +8,8 @@ import { Renderer } from './render.js';
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
 const ui = {
-  menu: $('menu'), lobby: $('lobby'), dead: $('dead'), end: $('end'), hud: $('hud'),
+  menu: $('menu'), lobby: $('lobby'), dead: $('dead'), end: $('end'), hud: $('hud'), lb: $('lb'),
+  me: $('me'), lbList: $('lb-list'), lbMe: $('lb-me'), result: $('result'),
   name: $('name'), play: $('play'), status: $('status'),
   lobbyText: $('lobby-text'), lobbySub: $('lobby-sub'),
   deadTitle: $('dead-title'), deadSub: $('dead-sub'),
@@ -47,7 +48,7 @@ const cam = { x: 0, y: 0, scale: renderer.baseScale };
 // ---------------------------------------------------------------- UI helpers
 
 function show(el, on = true) { el.hidden = !on; }
-function hidePanels() { for (const p of [ui.menu, ui.lobby, ui.dead, ui.end]) show(p, false); }
+function hidePanels() { for (const p of [ui.menu, ui.lobby, ui.dead, ui.end, ui.lb]) show(p, false); }
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -74,6 +75,7 @@ function toMenu(status = '') {
   setMode('menu');
   show(ui.menu);
   ui.status.textContent = status;
+  requestProfile();
 }
 
 function savedName() {
@@ -81,6 +83,72 @@ function savedName() {
 }
 function saveName(n) {
   try { localStorage.setItem('cr-name', n); } catch {}
+}
+
+/** Anonymous id for this browser: it's how the server keeps your stats. */
+function token() {
+  let t = '';
+  try { t = localStorage.getItem('cr-token') || ''; } catch {}
+  if (!/^[a-f0-9]{32}$/.test(t)) {
+    const b = new Uint8Array(16);
+    crypto.getRandomValues(b);
+    t = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+    try { localStorage.setItem('cr-token', t); } catch {}
+  }
+  return t;
+}
+const TOKEN = token();
+
+function requestProfile() {
+  net.send({ t: 'profile', token: TOKEN });
+}
+
+function xpBar(p) {
+  return `<div class="xpbar"><i style="width:${Math.round((100 * p.into) / Math.max(1, p.need))}%"></i></div>`;
+}
+
+function showProfile(p) {
+  if (!p.games) {
+    ui.me.innerHTML = 'Play a match to get on the leaderboard.';
+  } else {
+    ui.me.innerHTML = `<b>Level ${p.level}</b> · ${p.into} / ${p.need} XP${xpBar(p)}` +
+      `${p.games} game${p.games === 1 ? '' : 's'} · ${p.wins} win${p.wins === 1 ? '' : 's'} · ${p.kills} kill${p.kills === 1 ? '' : 's'} · best #${p.best}`;
+  }
+  show(ui.me);
+  if (mode === 'menu') ui.status.textContent = p.online > 1 ? `${p.online} players online` : '';
+}
+
+// ---------------------------------------------------------------- leaderboard
+
+let lbPeriod = 'day';
+function openLeaderboard(period = lbPeriod) {
+  lbPeriod = period;
+  for (const b of ui.lb.querySelectorAll('.tabs button')) b.classList.toggle('on', b.dataset.period === period);
+  ui.lbList.innerHTML = '<li class="empty">Loading…</li>';
+  ui.lbMe.textContent = '';
+  hidePanels();
+  show(ui.lb);
+  net.send({ t: 'lb', period });
+}
+function showLeaderboard(m) {
+  if (m.period !== lbPeriod || ui.lb.hidden) return;
+  ui.lbList.innerHTML = m.top.length
+    ? m.top.map((e) => `<li class="${e.me ? 'me' : ''}">${esc(e.name)}<span class="lv">lv ${e.level}</span>` +
+      `<span class="k">${e.points} pts</span></li>`).join('')
+    : '<li class="empty">Nobody yet. Be the first!</li>';
+  const when = { day: 'today', week: 'this week', all: 'so far' }[m.period];
+  ui.lbMe.textContent = m.me
+    ? `You're #${m.me.rank} of ${m.players} ${when} with ${m.me.points} points (${m.me.games} game${m.me.games === 1 ? '' : 's'}).`
+    : `You haven't played ${when === 'so far' ? 'yet' : when}.`;
+}
+$('lb-open').addEventListener('click', () => openLeaderboard());
+$('lb-close').addEventListener('click', () => toMenu());
+for (const b of ui.lb.querySelectorAll('.tabs button')) b.addEventListener('click', () => openLeaderboard(b.dataset.period));
+
+function showResult(m) {
+  ui.result.innerHTML = `<div class="pts">+${m.points} point${m.points === 1 ? '' : 's'} · +${m.xpGained} XP</div>` +
+    (m.levelUp ? `<div class="up">\u2B06 Level ${m.level}!</div>` : `<div>Level ${m.level} · ${m.into} / ${m.need} XP</div>`) +
+    xpBar(m);
 }
 
 async function goFullscreen() {
@@ -105,7 +173,7 @@ function join() {
   show(ui.lobby);
   ui.lobbyText.textContent = 'Finding a match…';
   ui.lobbySub.textContent = '';
-  net.send({ t: 'join', name, build: BUILD });
+  net.send({ t: 'join', name, build: BUILD, token: TOKEN });
   goFullscreen();
   keepAwake();
 }
@@ -117,7 +185,7 @@ ui.name.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !ui.play.d
 $('again').addEventListener('click', join);
 $('to-menu').addEventListener('click', () => { net.send({ t: 'leave' }); toMenu(); });
 addEventListener('keydown', (e) => {
-  if (e.code === 'Enter' && mode === 'menu' && document.activeElement !== ui.name && !ui.play.disabled) join();
+  if (e.code === 'Enter' && mode === 'menu' && !ui.menu.hidden && document.activeElement !== ui.name && !ui.play.disabled) join();
   if ((e.code === 'Space' || e.code === 'Enter') && mode === 'game' && !game.controlling && !ui.dead.hidden) join();
 });
 document.addEventListener('visibilitychange', () => {
@@ -191,6 +259,7 @@ net.onOpen = () => {
   ui.play.disabled = false;
   ui.play.textContent = 'PLAY';
   if (mode === 'menu') ui.status.textContent = '';
+  requestProfile();
 };
 
 net.onClose = () => {
@@ -231,11 +300,21 @@ net.onJson = (m) => {
       spectateId = null;
       ui.feed.innerHTML = '';
       ui.effects.innerHTML = '';
+      ui.result.innerHTML = '';
       flashUntil = 0;
       setMode('game');
       cam.x = game.me.xs[0];
       cam.y = game.me.ys[0];
       cam.scale = renderer.baseScale;
+      break;
+    case 'profile':
+      showProfile(m);
+      break;
+    case 'lb':
+      showLeaderboard(m);
+      break;
+    case 'result':
+      showResult(m);
       break;
     case 'death':
       if (game.active) game.onDeath(m);

@@ -45,6 +45,25 @@ button {
 }
 button:disabled { opacity: .5; cursor: default; }
 button.ghost { background: #263049; }
+button.slim { font-size: 16px; padding: 11px; font-weight: 700; }
+
+.me { margin-top: 14px; font-size: 14px; color: var(--muted); }
+.me b { color: var(--text); }
+.xpbar { height: 6px; margin: 6px 0 4px; border-radius: 3px; background: #263049; overflow: hidden; }
+.xpbar i { display: block; height: 100%; background: linear-gradient(90deg, #4dabf7, #51cf66); transition: width .8s; }
+
+.tabs { display: flex; gap: 6px; margin: 4px 0 8px; }
+.tabs button { margin: 0; padding: 8px 4px; font-size: 14px; font-weight: 700; background: #263049; }
+.tabs button.on { background: linear-gradient(135deg, #ff4d6d, #ff922b); }
+#lb-list { text-align: left; min-height: 120px; max-height: 46vh; overflow: auto; margin: 6px 0 0; padding-left: 34px; font-size: 15px; line-height: 1.65; }
+#lb-list li.me { color: #ffd43b; font-weight: 700; }
+#lb-list .k { color: var(--muted); float: right; }
+#lb-list .lv { color: var(--muted); font-size: 12px; margin-left: 4px; }
+#lb-list .empty { list-style: none; margin-left: -34px; text-align: center; color: var(--muted); }
+
+.result { font-size: 15px; margin: 0 0 6px; }
+.result .pts { font-size: 20px; font-weight: 800; color: #51cf66; }
+.result .up { color: #ffd43b; font-weight: 800; font-size: 18px; }
 .row { display: flex; gap: 10px; }
 .row button { margin-top: 6px; font-size: 18px; padding: 12px; }
 .howto { margin-top: 20px; font-size: 14px; color: var(--muted); line-height: 1.7; }

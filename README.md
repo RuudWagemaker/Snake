@@ -28,6 +28,20 @@ the picker, not the whole map. An effect starts 0.27 s after the pickup, so ever
 client knows about it before it kicks in, which keeps movement prediction exact.
 Bots steer toward power-ups that are close and safe to reach.
 
+## Levels and leaderboards
+
+There are no accounts. Each browser gets a random id (kept in `localStorage`),
+and the server keeps a profile per id: games, wins, kills, best place, XP and level.
+
+After every match you earn **points**: 1 for every player you outlasted, 3 per
+kill and 5 for a win. XP is the same plus 5 for playing. The menu shows your level,
+and the 🏆 leaderboard shows the top 20 for today, this week (from Monday) and all
+time, in Amsterdam time. Bots never count.
+
+Profiles are kept in `STATS_FILE` (in Docker: `/data/stats.json` on the `game_data`
+volume, so they survive redeploys). Without `STATS_FILE` they're only kept in memory.
+Nicknames with slurs or abuse are replaced by "Player".
+
 ## Controls
 
 | Platform | Steer |
@@ -126,6 +140,7 @@ visitors.
 | `PORT` | HTTP/WebSocket port (default 3000) |
 | `HOST` | Address to listen on (default: all) |
 | `RTC_PORT` | UDP port for WebRTC. Unset means WebSocket only. Needs the optional `node-datachannel` package |
+| `STATS_FILE` | JSON file for player profiles and leaderboards (unset: memory only) |
 | `RTC_PUBLIC_IP` | Public IP to announce, if the server's network card has a private IP (1:1 NAT) |
 
 Health check: `GET /healthz`.

@@ -40,6 +40,8 @@
     <p class="tag">Draw your line. Cut them off. Outlast the zone.</p>
     <input id="name" maxlength="16" placeholder="Nickname" autocomplete="off" spellcheck="false" enterkeyhint="go">
     <button id="play" disabled>Connecting&hellip;</button>
+    <div id="me" class="me" hidden></div>
+    <button id="lb-open" class="ghost slim">&#127942; Leaderboard</button>
     <div class="howto">
       <div><b>Keyboard</b> &larr; &rarr; or A / D</div>
       <div><b>Touch</b> hold the left or right side of the screen</div>
@@ -65,8 +67,22 @@
     <p class="small">Or keep watching: you join the next round here automatically. Tap to switch view.</p>
   </div>
 
+  <div id="lb" class="panel" hidden>
+    <h2>&#127942; Leaderboard</h2>
+    <div class="tabs">
+      <button data-period="day" class="on">Today</button>
+      <button data-period="week">This week</button>
+      <button data-period="all">All time</button>
+    </div>
+    <ol id="lb-list"></ol>
+    <p id="lb-me" class="small"></p>
+    <p class="small">Points: 1 for every player you outlast, 3 per kill, 5 for a win.</p>
+    <button id="lb-close" class="ghost slim">Back</button>
+  </div>
+
   <div id="end" class="panel" hidden>
     <h2 id="end-title"></h2>
+    <div id="result" class="result"></div>
     <ol id="ranking"></ol>
     <p id="end-sub" class="small"></p>
   </div>

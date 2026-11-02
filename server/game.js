@@ -5,6 +5,8 @@ import { decodeInputList } from '../public/shared/protocol.js';
 import { Room } from './room.js';
 import { InputBuffer } from './inputs.js';
 import { RtcPeer, rtcEnabled } from './rtc.js';
+import { cleanName } from './names.js';
+import { Stats, validToken } from './stats.js';
 
 const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
 
@@ -61,17 +63,13 @@ function makeDelayer() {
   };
 }
 
-function cleanName(s) {
-  const n = String(s ?? '').replace(/[^\p{L}\p{N} _\-.!?]/gu, '').trim().slice(0, 16);
-  return n || 'Player';
-}
-
 class Client {
   constructor(ws, server) {
     this.ws = ws;
     this.server = server;
     this.id = server.nextClientId++;
     this.name = 'Player';
+    this.token = null;    // anonymous profile id from the browser (see stats.js)
     this.room = null;
     this.player = null;   // current round's player object
     this.inputs = new InputBuffer();
@@ -127,10 +125,19 @@ class Client {
           return;
         }
         this.name = cleanName(msg.name);
+        if (validToken(msg.token)) this.token = msg.token;
         this.server.join(this);
         break;
       case 'leave':
         if (this.room) this.room.removeClient(this);
+        break;
+      case 'profile':
+        // Sent once after connecting: who am I, and how am I doing?
+        if (validToken(msg.token)) this.token = msg.token;
+        this.send({ t: 'profile', ...this.server.stats.summary(this.token), online: this.server.clients.size });
+        break;
+      case 'lb':
+        this.send({ t: 'lb', ...this.server.stats.leaderboard(msg.period, this.token) });
         break;
       case 'ping':
         this.send({ t: 'pong', c: msg.c });
@@ -172,8 +179,9 @@ class Client {
 }
 
 export class GameServer {
-  constructor(build = 'dev') {
+  constructor(build = 'dev', stats = new Stats()) {
     this.build = build;
+    this.stats = stats;
     this.rooms = new Set();
     this.clients = new Set();
     this.nextClientId = 1;

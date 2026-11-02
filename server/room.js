@@ -152,6 +152,7 @@ export class Room {
         color: COLORS[(colorOffset + i) % COLORS.length],
         bot: !client,
         client,
+        token: client ? client.token : null, // kept if they leave, so the match still counts
         x: sp.x, y: sp.y, a: sp.a,
         alive: true,
         solid: true,
@@ -405,5 +406,18 @@ export class Room {
       .sort((a, b) => a.place - b.place || b.kills - a.kills)
       .map((p) => ({ id: p.id, name: p.name, place: p.place, kills: p.kills, bot: p.bot }));
     this.broadcast({ t: 'end', winner: winner ? winner.id : null, ranking, next: END_SECONDS + NEXT_ROUND_LOBBY_SECONDS });
+    this.recordStats();
+  }
+
+  /** Points, XP and leaderboards for the humans in this match (bots don't count). */
+  recordStats() {
+    const stats = this.server.stats;
+    if (!stats) return;
+    const r = this.round;
+    for (const p of r.players) {
+      if (p.bot || !p.token) continue;
+      const res = stats.record(p.token, p.name, p.place, r.n, p.kills);
+      if (res && p.client && p.client.room === this) p.client.send({ t: 'result', place: p.place, n: r.n, kills: p.kills, ...res });
+    }
   }
 }
