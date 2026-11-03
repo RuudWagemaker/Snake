@@ -107,6 +107,22 @@ Add `?debug` to the URL to expose `window.__cr` (game state, netcode stats) in t
 
 Run the tests: `npm test`
 
+### Browser check
+
+`tools/ui-check.cjs` plays through the real UI in headless Chromium (phone and
+desktop size): menu, style panel, leaderboard, a whole match, the end screen and a
+friends' room joined through its link. It saves screenshots and fails on JavaScript
+errors or panels that don't fit the screen. It needs Playwright, which isn't a
+dependency of the game:
+
+```bash
+npm i --prefix /some/dir playwright && npx --prefix /some/dir playwright install --with-deps chromium
+NODE_PATH=/some/dir/node_modules node tools/ui-check.cjs ui-shots   # UI_QUICK=1 skips the match
+```
+
+The Claude Code agent `.claude/agents/curve-qa.md` runs the tests and this check,
+looks at the screenshots and reports problems.
+
 ## Deploy
 
 ### VPS (recommended: fastest on Wi-Fi)

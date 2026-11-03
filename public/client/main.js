@@ -177,7 +177,7 @@ function renderSkin() {
     }).join('');
   $('styles').innerHTML = Object.entries(TRAIL_STYLES).map(([k, st]) => {
     const locked = st.level > myLevel;
-    return `<button data-s="${k}" class="${skin.style === k ? 'on' : ''}${locked ? ' locked' : ''}">${st.label}${locked ? ' ' + lock(st.level) : ''}</button>`;
+    return `<button data-s="${k}" class="${skin.style === k ? 'on' : ''}${locked ? ' locked' : ''}">${st.label}${locked ? lock(st.level) : ''}</button>`;
   }).join('');
 }
 function pickSkin(next, lv) {

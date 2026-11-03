@@ -66,12 +66,15 @@ button.slim { font-size: 16px; padding: 11px; font-weight: 700; }
 .result .up { color: #ffd43b; font-weight: 800; font-size: 18px; }
 .row { display: flex; gap: 10px; }
 .row button { margin-top: 6px; font-size: 18px; padding: 12px; }
-.row button.slim { font-size: 15px; padding: 11px 6px; }
+.row button.slim { font-size: 15px; padding: 11px 4px; white-space: nowrap; letter-spacing: 0; }
+#lobby-room .row button.slim { white-space: normal; }
+#lobby:has(#lobby-room:not([hidden])) { width: min(92vw, 360px); }
 #room-info { color: #ffd43b; }
 .swatches { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; margin: 8px 0 4px; }
 .swatches button { margin: 0; padding: 0; aspect-ratio: 1; border-radius: 50%; font-size: 13px; border: 3px solid transparent; background: #263049; }
 .swatches button.on { border-color: #fff; }
 .swatches button.locked { opacity: .35; }
+#styles button { white-space: nowrap; letter-spacing: 0; font-size: 13px; }
 #styles button.locked { opacity: .45; }
 #room-info a { color: var(--accent2); margin-left: 6px; cursor: pointer; text-decoration: underline; }
 #lobby-room { margin-top: 10px; }
