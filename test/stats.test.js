@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
@@ -58,6 +58,38 @@ test('stats survive a restart', () => {
     const again = new Stats(file);
     assert.equal(again.summary(A).games, 1);
     assert.equal(again.summary(A).kills, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stats file is backed up once a day, last 14 days kept', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'cr-stats-'));
+  try {
+    const file = path.join(dir, 'stats.json');
+    const bdir = path.join(dir, 'backups');
+    const s = new Stats(file);
+    s.record(A, 'Ann', 3, 12, 1);
+    const day0 = Date.UTC(2026, 0, 1, 12);
+    s.saveNow(day0);
+    s.saveNow(day0 + 3600000); // same day: no second copy
+    assert.deepEqual(readdirSync(bdir), ['stats-2026-01-01.json']);
+    for (let d = 1; d < 20; d++) s.saveNow(day0 + d * 86400000);
+    const files = readdirSync(bdir).sort();
+    assert.equal(files.length, 14);
+    assert.equal(files[0], 'stats-2026-01-07.json');
+    assert.equal(files[13], 'stats-2026-01-20.json');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('names saved before the filter are cleaned on load', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'cr-stats-'));
+  try {
+    const file = path.join(dir, 'stats.json');
+    writeFileSync(file, JSON.stringify({ v: 1, profiles: { [A]: { name: 'fuck', games: 1, wins: 0, kills: 0, best: 1, xp: 10, points: 1, last: Date.now() } } }));
+    assert.equal(new Stats(file).get(A).name, 'Player');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

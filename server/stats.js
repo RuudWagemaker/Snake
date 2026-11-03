@@ -3,14 +3,16 @@
 // There are no accounts: each browser makes up a random token and keeps it in
 // localStorage. The server keeps one profile per token, in memory, and saves
 // them all to a JSON file (STATS_FILE) at most every few seconds.
-import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, mkdirSync, readdirSync, unlinkSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { cleanName } from './names.js';
 
 const SAVE_DELAY_MS = 10000;
 const LB_SIZE = 20;
 const LB_CACHE_MS = 5000;
 const PRUNE_DAYS = 60;          // forget one-off visitors after this long
 const TZ = 'Europe/Amsterdam';  // when "today" and "this week" start
+const BACKUP_DAYS = 14;         // daily copies of the stats file kept in backups/
 
 export const PERIODS = ['day', 'week', 'all'];
 
@@ -64,7 +66,9 @@ export class Stats {
     try {
       const data = JSON.parse(readFileSync(this.file, 'utf8'));
       for (const [token, p] of Object.entries(data.profiles || {})) {
-        if (validToken(token) && p && typeof p === 'object') this.profiles.set(token, p);
+        if (!validToken(token) || !p || typeof p !== 'object') continue;
+        p.name = cleanName(p.name); // names saved before the filter existed
+        this.profiles.set(token, p);
       }
       console.log(`[stats] loaded ${this.profiles.size} profiles from ${this.file}`);
     } catch (err) {
@@ -80,7 +84,7 @@ export class Stats {
     this.saveTimer.unref?.();
   }
 
-  saveNow() {
+  saveNow(now = Date.now()) {
     if (!this.file) return;
     clearTimeout(this.saveTimer);
     this.saveTimer = null;
@@ -91,6 +95,25 @@ export class Stats {
       renameSync(tmp, this.file); // atomic: a crash never leaves half a file
     } catch (err) {
       console.error(`[stats] could not save ${this.file}:`, err.message);
+      return;
+    }
+    this.backup(now);
+  }
+
+  /** Once a day, keep a copy of the saved file in backups/ (the last BACKUP_DAYS days). */
+  backup(now = Date.now()) {
+    try {
+      const dir = path.join(path.dirname(this.file), 'backups');
+      const name = `stats-${periodKeys(now).day}.json`;
+      if (existsSync(path.join(dir, name))) return;
+      mkdirSync(dir, { recursive: true });
+      const tmp = path.join(dir, name + '.tmp');
+      writeFileSync(tmp, readFileSync(this.file));
+      renameSync(tmp, path.join(dir, name));
+      const old = readdirSync(dir).filter((f) => /^stats-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort().slice(0, -BACKUP_DAYS);
+      for (const f of old) unlinkSync(path.join(dir, f));
+    } catch (err) {
+      console.error('[stats] backup failed:', err.message);
     }
   }
 
