@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { WebSocket } from 'ws';
-import { TICK_MS } from '../public/shared/constants.js';
+import { TICK_MS, COLORS, TRAIL_STYLES, colorLevel } from '../public/shared/constants.js';
 import { decodeInputList } from '../public/shared/protocol.js';
 import { Room } from './room.js';
 import { InputBuffer } from './inputs.js';
@@ -73,6 +73,7 @@ class Client {
     this.id = server.nextClientId++;
     this.name = 'Player';
     this.token = null;    // anonymous profile id from the browser (see stats.js)
+    this.skin = { color: -1, style: 'plain' }; // chosen colour (-1 = any) and trail style
     this.room = null;
     this.player = null;   // current round's player object
     this.inputs = new InputBuffer();
@@ -129,6 +130,7 @@ class Client {
         }
         this.name = cleanName(msg.name);
         if (validToken(msg.token)) this.token = msg.token;
+        this.skin = this.server.allowedSkin(this.token, msg.skin);
         this.server.join(this, validRoomCode(msg.room) ? msg.room : null);
         break;
       case 'leave':
@@ -231,6 +233,17 @@ export class GameServer {
   onClose(c) {
     this.clients.delete(c);
     if (c.room) c.room.removeClient(c);
+  }
+
+  /** The skin a player asked for, minus anything their level hasn't unlocked. */
+  allowedSkin(token, skin) {
+    const level = this.stats.summary(token).level;
+    const out = { color: -1, style: 'plain' };
+    if (!skin || typeof skin !== 'object') return out;
+    const c = skin.color;
+    if (Number.isInteger(c) && c >= 0 && c < COLORS.length && colorLevel(c) <= level) out.color = c;
+    if (Object.hasOwn(TRAIL_STYLES, skin.style) && TRAIL_STYLES[skin.style].level <= level) out.style = skin.style;
+    return out;
   }
 
   /** Public matchmaking, or a friends' room when `code` is given. */

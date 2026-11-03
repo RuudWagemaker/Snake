@@ -1,4 +1,4 @@
-import { TICK_MS, TICK_RATE, KILLER_ZONE, KILLER_LEFT } from '../shared/constants.js';
+import { TICK_MS, TICK_RATE, KILLER_ZONE, KILLER_LEFT, COLORS, TRAIL_STYLES, colorLevel } from '../shared/constants.js';
 import { decodeTick } from '../shared/protocol.js';
 import { Net } from './net.js';
 import { Input } from './input.js';
@@ -10,7 +10,7 @@ const canvas = $('game');
 const ui = {
   menu: $('menu'), lobby: $('lobby'), dead: $('dead'), end: $('end'), hud: $('hud'), lb: $('lb'),
   me: $('me'), lbList: $('lb-list'), lbMe: $('lb-me'), result: $('result'),
-  roomInfo: $('room-info'), lobbyRoom: $('lobby-room'), inviteMsg: $('invite-msg'), shareMsg: $('share-msg'),
+  skin: $('skin'), roomInfo: $('room-info'), lobbyRoom: $('lobby-room'), inviteMsg: $('invite-msg'), shareMsg: $('share-msg'),
   name: $('name'), play: $('play'), status: $('status'),
   lobbyText: $('lobby-text'), lobbySub: $('lobby-sub'),
   deadTitle: $('dead-title'), deadSub: $('dead-sub'),
@@ -49,7 +49,7 @@ const cam = { x: 0, y: 0, scale: renderer.baseScale };
 // ---------------------------------------------------------------- UI helpers
 
 function show(el, on = true) { el.hidden = !on; }
-function hidePanels() { for (const p of [ui.menu, ui.lobby, ui.dead, ui.end, ui.lb]) show(p, false); }
+function hidePanels() { for (const p of [ui.menu, ui.lobby, ui.dead, ui.end, ui.lb, ui.skin]) show(p, false); }
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -108,7 +108,9 @@ function xpBar(p) {
   return `<div class="xpbar"><i style="width:${Math.round((100 * p.into) / Math.max(1, p.need))}%"></i></div>`;
 }
 
+let myLevel = 1;
 function showProfile(p) {
+  myLevel = p.level;
   if (!p.games && !p.xp) {
     ui.me.innerHTML = 'Play a match to get on the leaderboard.';
   } else if (!p.games) {
@@ -158,6 +160,46 @@ function showResult(m) {
     xpBar(m);
 }
 
+// ---------------------------------------------------------------- style (unlockables)
+// Colour and trail style, unlocked by level. The server checks the level too.
+
+let skin = { color: -1, style: 'plain' };
+try { skin = { ...skin, ...JSON.parse(localStorage.getItem('cr-skin') || '{}') }; } catch {}
+
+function renderSkin() {
+  const lock = (lv) => `\u{1F512}${lv}`;
+  $('swatches').innerHTML =
+    `<button data-c="-1" class="${skin.color === -1 ? 'on' : ''}" title="Any colour">?</button>` +
+    COLORS.map((c, i) => {
+      const lv = colorLevel(i), locked = lv > myLevel;
+      return `<button data-c="${i}" class="${skin.color === i ? 'on' : ''}${locked ? ' locked' : ''}" ` +
+        `style="background:${c}" title="${locked ? 'Level ' + lv : ''}">${locked ? lock(lv) : ''}</button>`;
+    }).join('');
+  $('styles').innerHTML = Object.entries(TRAIL_STYLES).map(([k, st]) => {
+    const locked = st.level > myLevel;
+    return `<button data-s="${k}" class="${skin.style === k ? 'on' : ''}${locked ? ' locked' : ''}">${st.label}${locked ? ' ' + lock(st.level) : ''}</button>`;
+  }).join('');
+}
+function pickSkin(next, lv) {
+  if (lv > myLevel) { $('skin-msg').textContent = `Reach level ${lv} to unlock this (you're level ${myLevel}).`; return; }
+  skin = { ...skin, ...next };
+  try { localStorage.setItem('cr-skin', JSON.stringify(skin)); } catch {}
+  $('skin-msg').textContent = 'Saved. You get this colour unless someone in the match already has it.';
+  renderSkin();
+}
+$('swatches').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const c = Number(b.dataset.c);
+  pickSkin({ color: c }, c < 0 ? 1 : colorLevel(c));
+});
+$('styles').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (b) pickSkin({ style: b.dataset.s }, TRAIL_STYLES[b.dataset.s].level);
+});
+$('skin-open').addEventListener('click', () => { renderSkin(); $('skin-msg').textContent = 'Level up to unlock more.'; hidePanels(); show(ui.skin); });
+$('skin-close').addEventListener('click', () => toMenu());
+
 // ---------------------------------------------------------------- friends' rooms
 // A room is just a short code in the link (?room=abc12). Everyone who opens the
 // link plays in the same room; bots still fill the empty seats.
@@ -184,7 +226,7 @@ function showRoomInfo() {
   ui.roomInfo.innerHTML = roomCode ? `&#128101; Friends' room <b>${roomCode}</b><a id="leave-room">leave</a>` : '';
   if (roomCode) $('leave-room').addEventListener('click', () => setRoom(null));
   if (!ui.play.disabled) ui.play.textContent = roomCode ? 'JOIN ROOM' : 'PLAY';
-  $('friends').textContent = roomCode ? '\u{1F517} Invite friends' : '\u{1F465} Play with friends';
+  $('friends').textContent = roomCode ? '\u{1F517} Invite' : '\u{1F465} Friends';
 }
 
 /** Native share sheet on phones, otherwise copy to the clipboard. */
@@ -248,7 +290,7 @@ function join() {
   ui.lobbySub.textContent = '';
   show(ui.lobbyRoom, false);
   ui.inviteMsg.textContent = '';
-  net.send({ t: 'join', name, build: BUILD, token: TOKEN, room: roomCode });
+  net.send({ t: 'join', name, build: BUILD, token: TOKEN, room: roomCode, skin });
   goFullscreen();
   keepAwake();
 }

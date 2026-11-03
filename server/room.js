@@ -165,6 +165,21 @@ export class Room {
     const spawns = makeSpawns(rng, n, R0);
     const colorOffset = Math.floor(rng() * COLORS.length);
     const usedNames = new Set(humans.map((c) => c.name));
+    // Humans get the colour they picked (first come, first served), everyone
+    // else the next free colour.
+    const colors = new Array(n).fill(null);
+    const usedColors = new Set();
+    humans.slice(0, n).forEach((c, i) => {
+      const want = c.skin && c.skin.color >= 0 ? COLORS[c.skin.color] : null;
+      if (want && !usedColors.has(want)) { colors[i] = want; usedColors.add(want); }
+    });
+    for (let i = 0, k = 0; i < n; i++) {
+      if (colors[i]) continue;
+      let col;
+      do { col = COLORS[(colorOffset + k++) % COLORS.length]; } while (usedColors.has(col) && k < COLORS.length * 2);
+      colors[i] = col;
+      usedColors.add(col);
+    }
 
     const players = [];
     for (let i = 0; i < n; i++) {
@@ -174,7 +189,8 @@ export class Room {
       const p = {
         id,
         name: client ? client.name : botName(rng, usedNames),
-        color: COLORS[(colorOffset + i) % COLORS.length],
+        color: colors[i],
+        style: client && client.skin ? client.skin.style : 'plain',
         bot: !client,
         client,
         token: client ? client.token : null, // kept if they leave, so the match still counts
@@ -219,7 +235,7 @@ export class Room {
     const zone0 = zoneAt(this.round.plan, 0);
     for (let i = 0; i < this.round.itemTarget; i++) this.spawnItem(zone0);
 
-    const info = players.map((p) => ({ id: p.id, name: p.name, color: p.color, bot: p.bot, x: p.x, y: p.y, a: p.a }));
+    const info = players.map((p) => ({ id: p.id, name: p.name, color: p.color, style: p.style, bot: p.bot, x: p.x, y: p.y, a: p.a }));
     for (const c of this.clients) {
       c.send({ t: 'start', you: c.player.id, seed, R0, playTick: this.round.playTick, tick: 0, players: info, items: this.round.items });
     }

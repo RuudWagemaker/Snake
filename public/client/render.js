@@ -19,8 +19,8 @@ class Runs {
     this.cur.path.lineTo(x1, y1);
     this.lx = x1; this.ly = y1;
   }
-  stroke(ctx) {
-    for (const r of this.runs) { ctx.lineWidth = r.w; ctx.stroke(r.path); }
+  stroke(ctx, mul = 1, add = 0) {
+    for (const r of this.runs) { ctx.lineWidth = r.w * mul + add; ctx.stroke(r.path); }
   }
 }
 
@@ -116,7 +116,7 @@ export class Renderer {
     for (const sn of game.list) {
       if (sn.n === 0) continue;
       if (sn === game.me && game.controlling) {
-        this.drawTrail(sn, sn.n - 1, this.predictedExtra(game, f.myHead), v, sn.color);
+        this.drawTrail(sn, sn.n - 1, this.predictedExtra(game, f.myHead), v, this.liveColor(sn, f.now));
       } else {
         const ft = rt - sn.firstTick;
         let limit = Math.floor(ft);
@@ -141,7 +141,7 @@ export class Renderer {
         }
         const dead = sn.deathTick <= rt;
         if (extra && (sn.vox || sn.voy)) for (const p of extra) { p.x += sn.vox; p.y += sn.voy; }
-        this.drawTrail(sn, limit, extra, v, dead ? (sn.dimColor ||= dim(sn.color)) : sn.color, sn.vox || sn.voy ? sn : null);
+        this.drawTrail(sn, limit, extra, v, dead ? (sn.dimColor ||= dim(sn.color)) : this.liveColor(sn, f.now), sn.vox || sn.voy ? sn : null, dead);
       }
     }
     this.drawItems(game, v, f.now);
@@ -193,7 +193,7 @@ export class Renderer {
         const m = game.modsNow(sn, tick, this.mods || (this.mods = {}));
         const hr = Math.max(LINE_WIDTH, m.width) * 0.85;
         if (m.ghost) ctx.globalAlpha = 0.45 + 0.15 * Math.sin(f.now / 90);
-        ctx.fillStyle = sn.color;
+        ctx.fillStyle = this.liveColor(sn, f.now);
         ctx.beginPath();
         ctx.arc(hx, hy, hr, 0, TAU);
         ctx.fill();
@@ -263,8 +263,28 @@ export class Renderer {
     return out;
   }
 
+  /** Colour of a living snake right now ("rainbow" trails cycle through hues). */
+  liveColor(sn, now) {
+    return sn.style === 'rainbow' ? `hsl(${Math.round(now / 12 + sn.id * 47) % 360},90%,62%)` : sn.color;
+  }
+
+  /**
+   * Trail styles are drawn as extra strokes of the same paths: "neon" adds a
+   * soft glow underneath, "core" a bright centre line on top.
+   */
+  drawTrail(sn, limit, extra, v, color, glide = null, dead = false) {
+    const style = dead ? 'plain' : sn.style;
+    if (style === 'neon') {
+      this.ctx.globalAlpha = 0.28;
+      this.strokeTrail(sn, limit, extra, v, color, glide, 1, 9);
+      this.ctx.globalAlpha = 1;
+    }
+    this.strokeTrail(sn, limit, extra, v, color, glide);
+    if (style === 'core') this.strokeTrail(sn, limit, extra, v, 'rgba(255,255,255,0.8)', glide, 0.33, 0);
+  }
+
   /** `glide`: a snake whose newest points get its visual offset (fading along the tail). */
-  drawTrail(sn, limit, extra, v, color, glide = null) {
+  strokeTrail(sn, limit, extra, v, color, glide = null, mul = 1, add = 0) {
     const ctx = this.ctx;
     ctx.strokeStyle = color;
     const full = Math.floor(limit / CHUNK);
@@ -272,7 +292,7 @@ export class Renderer {
       let ch = sn.chunks[k];
       if (!ch) ch = sn.chunks[k] = buildChunk(sn, k * CHUNK, (k + 1) * CHUNK);
       if (ch.x1 < v.x0 || ch.x0 > v.x1 || ch.y1 < v.y0 || ch.y0 > v.y1) continue;
-      ch.runs.stroke(ctx);
+      ch.runs.stroke(ctx, mul, add);
     }
     // The newest part (and predicted/projected points) is drawn fresh each frame.
     const i0 = full * CHUNK;
@@ -296,7 +316,7 @@ export class Renderer {
         px = p.x; py = p.y; prevSolid = p.solid; prevW = w;
       }
     }
-    runs.stroke(ctx);
+    runs.stroke(ctx, mul, add);
   }
 
   drawItems(game, v, now) {

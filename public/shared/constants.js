@@ -72,3 +72,14 @@ export const COLORS = [
   '#ff6b6b', '#74c0fc', '#69db7c', '#ffa94d', '#e599f7', '#3bc9db',
   '#faa2c1', '#c0eb75', '#9775fa', '#ffe066', '#63e6be', '#ffc078',
 ];
+
+// Unlockables (cosmetic only). Colours are indexes into COLORS: the first 8 are
+// free, then 2 more per level (all 24 at level 9). Trail styles unlock by level.
+export const FREE_COLORS = 8;
+export const colorLevel = (i) => (i < FREE_COLORS ? 1 : 2 + Math.floor((i - FREE_COLORS) / 2));
+export const TRAIL_STYLES = {
+  plain:   { level: 1,  label: 'Plain' },
+  neon:    { level: 3,  label: 'Neon' },
+  core:    { level: 5,  label: 'Core' },
+  rainbow: { level: 8,  label: 'Rainbow' },
+};

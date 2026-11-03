@@ -43,6 +43,7 @@ export class Snake {
     this.id = info.id;
     this.name = info.name;
     this.color = info.color;
+    this.style = info.style || 'plain';  // trail style (cosmetic)
     this.bot = info.bot;
     this.cap = 512;
     this.xs = new Float32Array(this.cap);

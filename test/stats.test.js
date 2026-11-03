@@ -155,3 +155,26 @@ test("friends' rooms: joined by code, never by matchmaking, XP only", { timeout:
   assert.ok(s.summary(A).xp > 0);
   assert.equal(s.leaderboard('all', A).players, 0);
 });
+
+test('skins: only what your level has unlocked, and no two snakes share a colour', async () => {
+  const { GameServer } = await import('../server/game.js');
+  const { COLORS } = await import('../public/shared/constants.js');
+  const stats = new Stats();
+  const gs = new GameServer('t', stats);
+  assert.deepEqual(gs.allowedSkin(A, { color: 3, style: 'neon' }), { color: 3, style: 'plain' }); // level 1
+  assert.deepEqual(gs.allowedSkin(A, { color: 20, style: 'x' }), { color: -1, style: 'plain' });
+  assert.deepEqual(gs.allowedSkin(A, { color: 3, style: '__proto__' }), { color: 3, style: 'plain' });
+  stats.profiles.set(A, { name: 'a', games: 1, wins: 0, kills: 0, best: 1, xp: 2025, points: 0 }); // level 10
+  assert.deepEqual(gs.allowedSkin(A, { color: 23, style: 'rainbow' }), { color: 23, style: 'rainbow' });
+
+  const server = { clients: new Set(), removeRoom() {}, stats };
+  const room = new Room(server, 1);
+  const mk = (name, color) => ({ ws: { readyState: 1 }, name, skin: { color, style: 'plain' }, inputs: new InputBuffer(), send() {}, sendBinary() {}, sendRaw() {} });
+  room.addClient(mk('a', 5));
+  room.addClient(mk('b', 5));
+  room.startRound();
+  const cols = room.round.players.map((p) => p.color);
+  assert.equal(cols[0], COLORS[5]);
+  assert.notEqual(cols[1], COLORS[5]);
+  assert.equal(new Set(cols).size, cols.length);
+});

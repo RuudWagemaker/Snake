@@ -44,13 +44,21 @@ Nicknames with slurs or abuse are replaced by "Player".
 
 ## Play with friends
 
-Tap **Play with friends** in the menu. That opens a room with its own link
+Tap **👥 Friends** in the menu. That opens a room with its own link
 (`/?room=abc12`); **Invite friends** shares the link (share sheet on phones,
 clipboard elsewhere). Everyone who opens it plays in the same room, and bots fill
 the empty seats. The first round waits 45 s for friends, or until someone taps
 **Start now**. Someone who joins during a match plays from the next round. Friends'
 rooms give XP but don't count for the leaderboards. After a match, **Share result**
 sends a "can you beat me?" message with the link.
+
+## Style
+
+**🎨 Style** in the menu picks your colour and trail. 8 colours are free, 2 more
+unlock with each level (all 24 at level 9). Trails: *Neon* (glow) at level 3, *Core*
+(bright centre line) at level 5, *Rainbow* at level 8. It's only for looks, and the
+server checks your level. If someone in the match already has your colour, you get
+another one.
 
 ## Controls
 
