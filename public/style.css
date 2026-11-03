@@ -66,6 +66,12 @@ button.slim { font-size: 16px; padding: 11px; font-weight: 700; }
 .result .up { color: #ffd43b; font-weight: 800; font-size: 18px; }
 .row { display: flex; gap: 10px; }
 .row button { margin-top: 6px; font-size: 18px; padding: 12px; }
+.row button.slim { font-size: 15px; padding: 11px 6px; }
+#room-info { color: #ffd43b; }
+#room-info a { color: var(--accent2); margin-left: 6px; cursor: pointer; text-decoration: underline; }
+#lobby-room { margin-top: 10px; }
+#lobby.compact { max-width: min(92vw, 400px); }
+.names { margin-top: 6px; color: var(--text); font-size: 14px; line-height: 1.5; white-space: normal; }
 .howto { margin-top: 20px; font-size: 14px; color: var(--muted); line-height: 1.7; }
 .howto b { color: var(--text); font-weight: 600; }
 

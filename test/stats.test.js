@@ -117,3 +117,41 @@ test('profile and leaderboard over the WebSocket', { timeout: 10000 }, async () 
     await srv.close();
   }
 });
+
+test("friends' rooms: joined by code, never by matchmaking, XP only", { timeout: 15000 }, async () => {
+  const srv = await startServer({ port: 0 });
+  try {
+    const connect = async () => {
+      const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
+      const msgs = [];
+      ws.on('message', (d, bin) => { if (!bin) msgs.push(JSON.parse(d.toString())); });
+      const next = (pred) => new Promise((resolve) => {
+        const check = () => { const m = msgs.find(pred); if (m) resolve(m); else setTimeout(check, 10); };
+        check();
+      });
+      const hello = await next((m) => m.t === 'hello');
+      return { ws, msgs, next, build: hello.build };
+    };
+    const a = await connect(), b = await connect(), c = await connect();
+    a.ws.send(JSON.stringify({ t: 'join', name: 'Ann', build: a.build, token: A, room: 'abc12' }));
+    await a.next((m) => m.t === 'lobby' && m.code === 'abc12');
+    b.ws.send(JSON.stringify({ t: 'join', name: 'Bob', build: b.build, token: B, room: 'abc12' }));
+    const lobby = await b.next((m) => m.t === 'lobby' && m.players === 2);
+    assert.deepEqual(lobby.names, ['Ann', 'Bob']);
+    assert.ok(lobby.startsIn > 20); // friends get time to join
+    c.ws.send(JSON.stringify({ t: 'join', name: 'Cat', build: c.build })); // public matchmaking
+    const pub = await c.next((m) => m.t === 'lobby');
+    assert.equal(pub.code, null);
+    assert.equal(pub.players, 1);
+    b.ws.send(JSON.stringify({ t: 'go' }));
+    await a.next((m) => m.t === 'start');
+    for (const x of [a, b, c]) x.ws.close();
+  } finally {
+    await srv.close();
+  }
+  const s = new Stats();
+  const res = s.record(A, 'Ann', 1, 10, 2, Date.now(), false);
+  assert.equal(res.ranked, false);
+  assert.ok(s.summary(A).xp > 0);
+  assert.equal(s.leaderboard('all', A).players, 0);
+});

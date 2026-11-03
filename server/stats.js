@@ -113,9 +113,9 @@ export class Stats {
 
   /**
    * Record a finished match for one human. Returns what they earned, for the
-   * end screen.
+   * end screen. Unranked matches (friends' rooms) only give XP.
    */
-  record(token, name, place, n, kills, now = Date.now()) {
+  record(token, name, place, n, kills, now = Date.now(), ranked = true) {
     if (!validToken(token)) return null;
     let p = this.profiles.get(token);
     if (!p) {
@@ -127,13 +127,18 @@ export class Stats {
     const before = levelFor(p.xp);
     const win = place === 1 ? 1 : 0;
     p.name = name;
+    p.last = now;
+    p.xp += xp;
+    this.scheduleSave();
+    if (!ranked) {
+      const info = levelInfo(p.xp);
+      return { points, xpGained: xp, ranked: false, levelUp: info.level > before, ...info };
+    }
     p.games++;
     p.wins += win;
     p.kills += kills;
     p.points += points;
     p.best = p.best ? Math.min(p.best, place) : place;
-    p.xp += xp;
-    p.last = now;
     const keys = periodKeys(now);
     for (const per of ['day', 'week']) {
       if (!p[per] || p[per].key !== keys[per]) p[per] = emptyTally(keys[per]);
@@ -141,9 +146,8 @@ export class Stats {
       t.points += points; t.games++; t.wins += win; t.kills += kills;
     }
     this.lbCache.clear();
-    this.scheduleSave();
     const info = levelInfo(p.xp);
-    return { points, xpGained: xp, levelUp: info.level > before, ...info };
+    return { points, xpGained: xp, ranked: true, levelUp: info.level > before, ...info };
   }
 
   /** Points etc. of a profile for one period (null if nothing this period). */

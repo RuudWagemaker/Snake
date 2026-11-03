@@ -44,6 +44,9 @@ function udpSim(fn) {
   if (inSpike(at)) return;
   setTimeout(fn, at - performance.now());
 }
+/** Friends' rooms: short lowercase codes, made up by the browser that opens one. */
+export const validRoomCode = (s) => typeof s === 'string' && /^[a-z0-9]{4,10}$/.test(s);
+
 function makeDelayer() {
   if (!SIM_LAG_MS && !SIM_JITTER_MS && !SIM_SPIKE_MS) return null;
   // Strict FIFO with one timer, so messages are never reordered (TCP never does).
@@ -126,10 +129,14 @@ class Client {
         }
         this.name = cleanName(msg.name);
         if (validToken(msg.token)) this.token = msg.token;
-        this.server.join(this);
+        this.server.join(this, validRoomCode(msg.room) ? msg.room : null);
         break;
       case 'leave':
         if (this.room) this.room.removeClient(this);
+        break;
+      case 'go':
+        // "Start now" in a friends' room lobby
+        if (this.room && this.room.code) this.room.startSoon();
         break;
       case 'profile':
         // Sent once after connecting: who am I, and how am I doing?
@@ -226,14 +233,19 @@ export class GameServer {
     if (c.room) c.room.removeClient(c);
   }
 
-  join(c) {
+  /** Public matchmaking, or a friends' room when `code` is given. */
+  join(c, code = null) {
     if (c.room) c.room.removeClient(c);
     let room = null;
     for (const r of this.rooms) {
-      if (r.canJoin()) { room = r; break; }
+      if (code ? r.code === code : r.canJoin()) { room = r; break; }
+    }
+    if (room && code && room.full()) {
+      c.send({ t: 'error', msg: 'That room is full.' });
+      return;
     }
     if (!room) {
-      room = new Room(this, this.nextRoomId++);
+      room = new Room(this, this.nextRoomId++, code);
       this.rooms.add(room);
     }
     room.addClient(c);

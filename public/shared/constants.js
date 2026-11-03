@@ -22,6 +22,7 @@ export const GAP_INTERVAL_MAX = 110;
 export const MIN_PLAYERS = 10;            // rooms are topped up with bots to this size
 export const MAX_PLAYERS = 24;
 export const LOBBY_SECONDS = 5;           // wait for more humans after the first one joins
+export const PRIVATE_LOBBY_SECONDS = 45;  // friends' rooms wait longer (or until someone taps Start)
 export const NEXT_ROUND_LOBBY_SECONDS = 4;
 export const COUNTDOWN_SECONDS = 3;       // snakes are frozen and shown before moving
 export const END_SECONDS = 6;

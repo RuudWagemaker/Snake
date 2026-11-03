@@ -42,6 +42,16 @@ Profiles are kept in `STATS_FILE` (in Docker: `/data/stats.json` on the `game_da
 volume, so they survive redeploys). Without `STATS_FILE` they're only kept in memory.
 Nicknames with slurs or abuse are replaced by "Player".
 
+## Play with friends
+
+Tap **Play with friends** in the menu. That opens a room with its own link
+(`/?room=abc12`); **Invite friends** shares the link (share sheet on phones,
+clipboard elsewhere). Everyone who opens it plays in the same room, and bots fill
+the empty seats. The first round waits 45 s for friends, or until someone taps
+**Start now**. Someone who joins during a match plays from the next round. Friends'
+rooms give XP but don't count for the leaderboards. After a match, **Share result**
+sends a "can you beat me?" message with the link.
+
 ## Controls
 
 | Platform | Steer |

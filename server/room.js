@@ -1,5 +1,5 @@
 import {
-  TICK_RATE, MIN_PLAYERS, MAX_PLAYERS, LOBBY_SECONDS, NEXT_ROUND_LOBBY_SECONDS,
+  TICK_RATE, MIN_PLAYERS, MAX_PLAYERS, LOBBY_SECONDS, NEXT_ROUND_LOBBY_SECONDS, PRIVATE_LOBBY_SECONDS,
   COUNTDOWN_SECONDS, END_SECONDS, KILLER_LEFT, COLORS, fieldRadius,
   POWERUPS, POWERUP_TYPES, EFFECT_DELAY, ITEM_RADIUS, OTHERS_RANGE, LINE_WIDTH,
 } from '../public/shared/constants.js';
@@ -10,6 +10,7 @@ import { encodeTickBody, writeTickHeader, FLAG_GAP, FLAG_DIED, MAX_FUTURE } from
 import { botThink, botName } from './bot.js';
 
 const LOBBY_TICKS = LOBBY_SECONDS * TICK_RATE;
+const PRIVATE_LOBBY_TICKS = PRIVATE_LOBBY_SECONDS * TICK_RATE;
 const COUNTDOWN_TICKS = COUNTDOWN_SECONDS * TICK_RATE;
 const END_TICKS = END_SECONDS * TICK_RATE;
 // Bots decide their steering this many ticks ahead. Their path is then known in
@@ -41,17 +42,34 @@ function makeSpawns(rng, n, R0) {
 }
 
 export class Room {
-  constructor(server, id) {
+  constructor(server, id, code = null) {
     this.server = server;
     this.id = id;
+    this.code = code;       // set for a friends' room (joined by link, not matchmaking)
     this.clients = new Set();
     this.state = 'lobby';   // lobby -> playing -> ended -> lobby ...
-    this.timer = LOBBY_TICKS;
+    this.timer = this.firstLobbyTicks();
     this.round = null;
   }
 
+  firstLobbyTicks() {
+    return this.code ? PRIVATE_LOBBY_TICKS : LOBBY_TICKS;
+  }
+
+  /** Public matchmaking only fills public rooms that haven't started. */
   canJoin() {
-    return this.state === 'lobby' && this.clients.size < MAX_PLAYERS;
+    return !this.code && this.state === 'lobby' && this.clients.size < MAX_PLAYERS;
+  }
+
+  full() {
+    return this.clients.size >= MAX_PLAYERS;
+  }
+
+  /** Someone in a friends' room tapped "Start now". */
+  startSoon() {
+    if (this.state !== 'lobby' || this.timer <= TICK_RATE) return;
+    this.timer = TICK_RATE;
+    this.broadcastLobby();
   }
 
   addClient(c) {
@@ -59,9 +77,10 @@ export class Room {
     c.player = null;
     c.inputs.reset();
     this.clients.add(c);
-    if (this.clients.size === 1) this.timer = LOBBY_TICKS;
+    if (this.clients.size === 1) this.timer = this.firstLobbyTicks();
     if (this.clients.size >= MAX_PLAYERS) this.timer = Math.min(this.timer, TICK_RATE);
-    this.broadcastLobby();
+    if (this.state === 'lobby') this.broadcastLobby();
+    else c.send({ ...this.lobbyInfo(), waiting: true }); // friends' room mid-match: joins the next round
   }
 
   removeClient(c) {
@@ -97,15 +116,21 @@ export class Room {
     for (const c of this.clients) c.sendRaw(s);
   }
 
-  broadcastLobby() {
-    this.broadcast({
+  lobbyInfo() {
+    return {
       t: 'lobby',
       room: this.id,
+      code: this.code,
       players: this.clients.size,
+      names: this.code ? [...this.clients].map((c) => c.name) : undefined,
       max: MAX_PLAYERS,
       startsIn: Math.ceil(this.timer / TICK_RATE),
       online: this.server.clients.size,
-    });
+    };
+  }
+
+  broadcastLobby() {
+    this.broadcast(this.lobbyInfo());
   }
 
   step() {
@@ -416,7 +441,8 @@ export class Room {
     const r = this.round;
     for (const p of r.players) {
       if (p.bot || !p.token) continue;
-      const res = stats.record(p.token, p.name, p.place, r.n, p.kills);
+      // Friends' rooms earn XP but don't count for the leaderboards.
+      const res = stats.record(p.token, p.name, p.place, r.n, p.kills, Date.now(), !this.code);
       if (res && p.client && p.client.room === this) p.client.send({ t: 'result', place: p.place, n: r.n, kills: p.kills, ...res });
     }
   }

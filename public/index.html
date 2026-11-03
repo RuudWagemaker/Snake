@@ -41,7 +41,11 @@
     <input id="name" maxlength="16" placeholder="Nickname" autocomplete="off" spellcheck="false" enterkeyhint="go">
     <button id="play" disabled>Connecting&hellip;</button>
     <div id="me" class="me" hidden></div>
-    <button id="lb-open" class="ghost slim">&#127942; Leaderboard</button>
+    <div id="room-info" class="small" hidden></div>
+    <div class="row">
+      <button id="friends" class="ghost slim">&#128101; Play with friends</button>
+      <button id="lb-open" class="ghost slim">&#127942; Leaderboard</button>
+    </div>
     <div class="howto">
       <div><b>Keyboard</b> &larr; &rarr; or A / D</div>
       <div><b>Touch</b> hold the left or right side of the screen</div>
@@ -55,6 +59,13 @@
     <div class="spinner"></div>
     <div id="lobby-text">Finding players&hellip;</div>
     <div id="lobby-sub" class="small"></div>
+    <div id="lobby-room" hidden>
+      <div class="row">
+        <button id="invite" class="slim">Invite friends</button>
+        <button id="go" class="ghost slim">Start now</button>
+      </div>
+      <p id="invite-msg" class="small"></p>
+    </div>
   </div>
 
   <div id="dead" class="panel bottom" hidden>
@@ -85,6 +96,8 @@
     <div id="result" class="result"></div>
     <ol id="ranking"></ol>
     <p id="end-sub" class="small"></p>
+    <button id="share" class="ghost slim">Share result</button>
+    <p id="share-msg" class="small" hidden></p>
   </div>
 
   <script type="module" src="client/main.js?v=%BUILD%"></script>

@@ -10,6 +10,7 @@ const canvas = $('game');
 const ui = {
   menu: $('menu'), lobby: $('lobby'), dead: $('dead'), end: $('end'), hud: $('hud'), lb: $('lb'),
   me: $('me'), lbList: $('lb-list'), lbMe: $('lb-me'), result: $('result'),
+  roomInfo: $('room-info'), lobbyRoom: $('lobby-room'), inviteMsg: $('invite-msg'), shareMsg: $('share-msg'),
   name: $('name'), play: $('play'), status: $('status'),
   lobbyText: $('lobby-text'), lobbySub: $('lobby-sub'),
   deadTitle: $('dead-title'), deadSub: $('dead-sub'),
@@ -108,8 +109,10 @@ function xpBar(p) {
 }
 
 function showProfile(p) {
-  if (!p.games) {
+  if (!p.games && !p.xp) {
     ui.me.innerHTML = 'Play a match to get on the leaderboard.';
+  } else if (!p.games) {
+    ui.me.innerHTML = `<b>Level ${p.level}</b> · ${p.into} / ${p.need} XP${xpBar(p)}`;
   } else {
     ui.me.innerHTML = `<b>Level ${p.level}</b> · ${p.into} / ${p.need} XP${xpBar(p)}` +
       `${p.games} game${p.games === 1 ? '' : 's'} · ${p.wins} win${p.wins === 1 ? '' : 's'} · ${p.kills} kill${p.kills === 1 ? '' : 's'} · best #${p.best}`;
@@ -145,11 +148,81 @@ $('lb-open').addEventListener('click', () => openLeaderboard());
 $('lb-close').addEventListener('click', () => toMenu());
 for (const b of ui.lb.querySelectorAll('.tabs button')) b.addEventListener('click', () => openLeaderboard(b.dataset.period));
 
+let lastResult = null;
 function showResult(m) {
-  ui.result.innerHTML = `<div class="pts">+${m.points} point${m.points === 1 ? '' : 's'} · +${m.xpGained} XP</div>` +
+  lastResult = m;
+  ui.result.innerHTML = (m.ranked
+    ? `<div class="pts">+${m.points} point${m.points === 1 ? '' : 's'} · +${m.xpGained} XP</div>`
+    : `<div class="pts">+${m.xpGained} XP</div><div class="small">Friends' rooms don't count for the leaderboard</div>`) +
     (m.levelUp ? `<div class="up">\u2B06 Level ${m.level}!</div>` : `<div>Level ${m.level} · ${m.into} / ${m.need} XP</div>`) +
     xpBar(m);
 }
+
+// ---------------------------------------------------------------- friends' rooms
+// A room is just a short code in the link (?room=abc12). Everyone who opens the
+// link plays in the same room; bots still fill the empty seats.
+
+const CODE_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789';
+const validCode = (s) => typeof s === 'string' && /^[a-z0-9]{4,10}$/.test(s);
+let roomCode = validCode(new URLSearchParams(location.search).get('room')) ? new URLSearchParams(location.search).get('room') : null;
+
+function setRoom(code) {
+  roomCode = code;
+  const url = new URL(location.href);
+  if (code) url.searchParams.set('room', code);
+  else url.searchParams.delete('room');
+  history.replaceState(null, '', url);
+  showRoomInfo();
+}
+function roomLink() {
+  const url = new URL(location.origin + location.pathname);
+  if (roomCode) url.searchParams.set('room', roomCode);
+  return url.toString();
+}
+function showRoomInfo() {
+  show(ui.roomInfo, !!roomCode);
+  ui.roomInfo.innerHTML = roomCode ? `&#128101; Friends' room <b>${roomCode}</b><a id="leave-room">leave</a>` : '';
+  if (roomCode) $('leave-room').addEventListener('click', () => setRoom(null));
+  if (!ui.play.disabled) ui.play.textContent = roomCode ? 'JOIN ROOM' : 'PLAY';
+  $('friends').textContent = roomCode ? '\u{1F517} Invite friends' : '\u{1F465} Play with friends';
+}
+
+/** Native share sheet on phones, otherwise copy to the clipboard. */
+async function share(text, url, msgEl) {
+  const say = (s) => { msgEl.textContent = s; show(msgEl); };
+  if (navigator.share) {
+    try { await navigator.share({ title: 'Curve Royale', text, url }); return; } catch (e) { if (e.name === 'AbortError') return; }
+  }
+  try {
+    await navigator.clipboard.writeText(`${text} ${url}`);
+    say('Link copied. Send it to your friends!');
+  } catch {
+    say(url);
+  }
+}
+
+function invite(msgEl) {
+  share('Come play Curve Royale with me!', roomLink(), msgEl);
+}
+
+$('friends').addEventListener('click', () => {
+  if (roomCode) { invite(ui.status); return; }
+  const b = new Uint8Array(5);
+  crypto.getRandomValues(b);
+  setRoom([...b].map((x) => CODE_CHARS[x % CODE_CHARS.length]).join(''));
+  join();
+});
+$('invite').addEventListener('click', () => invite(ui.inviteMsg));
+$('go').addEventListener('click', () => net.send({ t: 'go' }));
+$('share').addEventListener('click', () => {
+  const r = lastResult;
+  const text = r
+    ? (r.place === 1 ? `I won a round of Curve Royale against ${r.n - 1} others with ${r.kills} kill${r.kills === 1 ? '' : 's'}! Can you beat me?`
+      : `I came #${r.place} of ${r.n} in Curve Royale with ${r.kills} kill${r.kills === 1 ? '' : 's'}. Can you beat me?`)
+    : 'Play Curve Royale with me!';
+  share(text, roomLink(), ui.shareMsg);
+});
+showRoomInfo();
 
 async function goFullscreen() {
   if (!isTouch) return;
@@ -173,7 +246,9 @@ function join() {
   show(ui.lobby);
   ui.lobbyText.textContent = 'Finding a match…';
   ui.lobbySub.textContent = '';
-  net.send({ t: 'join', name, build: BUILD, token: TOKEN });
+  show(ui.lobbyRoom, false);
+  ui.inviteMsg.textContent = '';
+  net.send({ t: 'join', name, build: BUILD, token: TOKEN, room: roomCode });
   goFullscreen();
   keepAwake();
 }
@@ -257,7 +332,7 @@ game.onEvent = (ev) => {
 
 net.onOpen = () => {
   ui.play.disabled = false;
-  ui.play.textContent = 'PLAY';
+  ui.play.textContent = roomCode ? 'JOIN ROOM' : 'PLAY';
   if (mode === 'menu') ui.status.textContent = '';
   requestProfile();
 };
@@ -286,10 +361,18 @@ net.onJson = (m) => {
       setMode('lobby');
       game.active = false;
       show(ui.lobby);
-      ui.lobbyText.textContent = `Starting in ${m.startsIn}s`;
-      ui.lobbySub.textContent = m.players > 1
-        ? `${m.players} players in this match · bots fill the rest`
-        : 'Waiting for players · bots fill the rest';
+      show(ui.lobbyRoom, !!m.code);
+      if (m.code) {
+        ui.lobbyText.textContent = m.waiting ? 'A match is being played' : `Friends' room · starting in ${m.startsIn}s`;
+        ui.lobbySub.innerHTML = (m.waiting ? "You'll join the next round." : 'Invite friends with the link · bots fill the rest') +
+          `<div class="names">${m.names.map(esc).join(' · ')}</div>`;
+        show($('go'), !m.waiting && m.startsIn > 1);
+      } else {
+        ui.lobbyText.textContent = `Starting in ${m.startsIn}s`;
+        ui.lobbySub.textContent = m.players > 1
+          ? `${m.players} players in this match · bots fill the rest`
+          : 'Waiting for players · bots fill the rest';
+      }
       break;
     case 'start':
       if (mode === 'menu') return;
@@ -301,6 +384,8 @@ net.onJson = (m) => {
       ui.feed.innerHTML = '';
       ui.effects.innerHTML = '';
       ui.result.innerHTML = '';
+      lastResult = null;
+      show(ui.shareMsg, false);
       flashUntil = 0;
       setMode('game');
       cam.x = game.me.xs[0];
