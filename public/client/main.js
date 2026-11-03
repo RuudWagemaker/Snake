@@ -4,6 +4,7 @@ import { Net } from './net.js';
 import { Input } from './input.js';
 import { ClientGame } from './game.js';
 import { Renderer } from './render.js';
+import { sound } from './sound.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -370,8 +371,11 @@ function updateTip(serverTick, now) {
 }
 
 let flashUntil = 0;
+let lastBeat = -1, zoneWarned = false;
 game.onEvent = (ev) => {
   if (ev.type === 'pickup') {
+    if (ev.by === game.me) sound.play('pickup');
+    else if (ev.hitsMe && !ev.def.good) { sound.play('hit'); sound.vibrate(60); }
     if (ev.hitsMe && !ev.def.good) {
       // an opponent's red power-up hit us: make it impossible to miss
       ui.center.innerHTML = `<span style="color:#ff6b81;font-size:0.6em">${ev.def.icon} ${ev.def.label.toUpperCase()}!</span><small>from ${esc(ev.by ? ev.by.name : '?')}</small>`;
@@ -387,6 +391,7 @@ game.onEvent = (ev) => {
   else if (ev.killer === s) feed(`${nameHtml(s)} crashed into their own line`);
   else if (ev.killer) {
     const tag = killTag(ev.killer, ev.msg.tick);
+    if (ev.killer === game.me && !me) { sound.play('kill'); sound.vibrate(40); }
     feed(`${nameHtml(ev.killer)} cut off ${nameHtml(s)}${tag ? `<span class="tag">${tag}</span>` : ''}`);
     if (tag && ev.killer === game.me && !me) {
       ui.center.innerHTML = `<span style="color:#ffd43b;font-size:0.55em">${tag}!</span>`;
@@ -395,6 +400,8 @@ game.onEvent = (ev) => {
   }
 
   if (me) {
+    sound.play('death');
+    sound.vibrate([90, 50, 180]);
     spectateId = ev.killer && ev.killer !== s && ev.killer.alive ? ev.killer.id : null;
     clearTimeout(deadTimer);
     deadTimer = setTimeout(() => {
@@ -526,7 +533,7 @@ net.onBinary = (buf, via) => {
 function showEnd(m) {
   if (mode !== 'game') return;
   const winner = m.winner ? game.snakes.get(m.winner) : null;
-  if (winner && winner === game.me) ui.endTitle.textContent = '\u{1F3C6} You win!';
+  if (winner && winner === game.me) { ui.endTitle.textContent = '\u{1F3C6} You win!'; sound.play('win'); }
   else if (winner) ui.endTitle.innerHTML = `\u{1F3C6} ${nameHtml(winner)} wins`;
   else ui.endTitle.textContent = 'Draw!';
   ui.ranking.innerHTML = m.ranking.slice(0, 10).map((r) => {
@@ -604,6 +611,12 @@ function frame(now) {
 
   // Countdown / center message (every frame, cheap)
   const toGo = (game.playTick - serverTick) / TICK_RATE;
+  const beat = toGo > 0 ? Math.ceil(toGo) : toGo > -0.8 ? 0 : -1;
+  if (beat !== lastBeat) {
+    if (beat > 0 && beat <= 3) sound.play('count');
+    else if (beat === 0 && lastBeat > 0) sound.play('go');
+    lastBeat = beat;
+  }
   if (toGo > 0) ui.center.innerHTML = `${Math.ceil(toGo)}<small>${isTouch ? 'hold left / right to steer' : '← → to steer'}</small>`;
   else if (toGo > -0.8) ui.center.textContent = 'GO!';
   else if (now < flashUntil) { /* showing a power-up warning */ }
@@ -643,6 +656,9 @@ function updateHud(zone, serverTick) {
   else if (zone.next) txt = `Zone shrinks in ${Math.ceil(zone.ticksLeft / TICK_RATE)}s`;
   ui.zoneInfo.textContent = txt;
   ui.zoneInfo.classList.toggle('warn', warn);
+  const closing = zone.shrinking && game.controlling && !game.ended;
+  if (closing && !zoneWarned) sound.play('zone');
+  zoneWarned = closing;
 }
 
 // ---------------------------------------------------------------- diagnostics
@@ -731,6 +747,15 @@ const diag = {
   },
 };
 ui.kills.addEventListener('click', () => diag.toggle());
+const soundBtn = $('sound');
+function showSoundBtn() {
+  soundBtn.textContent = sound.enabled ? '\u{1F50A}' : '\u{1F507}';
+  soundBtn.title = sound.enabled ? 'Sound on (M)' : 'Sound off (M)';
+  soundBtn.setAttribute('aria-label', soundBtn.title);
+}
+soundBtn.addEventListener('click', () => { sound.toggle(); showSoundBtn(); soundBtn.blur(); });
+showSoundBtn();
+addEventListener('keydown', (e) => { if (e.code === 'KeyM' && !e.repeat && !(e.target instanceof HTMLInputElement)) { sound.toggle(); showSoundBtn(); } });
 addEventListener('keydown', (e) => { if (e.code === 'KeyN' && !(e.target instanceof HTMLInputElement)) diag.toggle(); });
 try { if (localStorage.getItem('cr-net') || new URLSearchParams(location.search).has('net')) diag.toggle(true); } catch {}
 
