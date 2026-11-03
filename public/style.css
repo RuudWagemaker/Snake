@@ -47,15 +47,15 @@ button:disabled { opacity: .5; cursor: default; }
 button.ghost { background: #263049; }
 button.slim { font-size: 16px; padding: 11px; font-weight: 700; }
 
-.me { margin-top: 14px; font-size: 14px; color: var(--muted); }
-.me b { color: var(--text); }
+#me { margin: 14px 0 8px; font-size: 14px; color: var(--muted); }
+#me b { color: var(--text); }
 .xpbar { height: 6px; margin: 6px 0 4px; border-radius: 3px; background: #263049; overflow: hidden; }
 .xpbar i { display: block; height: 100%; background: linear-gradient(90deg, #4dabf7, #51cf66); transition: width .8s; }
 
 .tabs { display: flex; gap: 6px; margin: 4px 0 8px; }
 .tabs button { margin: 0; padding: 8px 4px; font-size: 14px; font-weight: 700; background: #263049; }
 .tabs button.on { background: linear-gradient(135deg, #ff4d6d, #ff922b); }
-#lb-list { text-align: left; min-height: 120px; max-height: 46vh; overflow: auto; margin: 6px 0 0; padding-left: 34px; font-size: 15px; line-height: 1.65; }
+#lb-list { text-align: left; min-height: 0; max-height: 46vh; overflow: auto; margin: 6px 0 0; padding-left: 34px; font-size: 15px; line-height: 1.65; }
 #lb-list li.me { color: #ffd43b; font-weight: 700; }
 #lb-list .k { color: var(--muted); float: right; }
 #lb-list .lv { color: var(--muted); font-size: 12px; margin-left: 4px; }
@@ -69,18 +69,22 @@ button.slim { font-size: 16px; padding: 11px; font-weight: 700; }
 .row button.slim { font-size: 15px; padding: 11px 4px; white-space: nowrap; letter-spacing: 0; }
 #lobby-room .row button.slim { white-space: normal; }
 #lobby:has(#lobby-room:not([hidden])) { width: min(92vw, 360px); }
-#room-info { color: #ffd43b; }
+#room-info { color: #ffd43b; margin-bottom: 8px; }
 .swatches { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; margin: 8px 0 4px; }
 .swatches button { margin: 0; padding: 0; aspect-ratio: 1; border-radius: 50%; font-size: 13px; border: 3px solid transparent; background: #263049; }
 .swatches button.on { border-color: #fff; }
-.swatches button.locked { opacity: .35; }
-#styles button { white-space: nowrap; letter-spacing: 0; font-size: 13px; }
+.swatches button.locked { box-shadow: inset 0 0 0 40px rgba(11,15,23,.6); color: #fff; text-shadow: 0 1px 3px #000; }
+.swatches button.locked.on { box-shadow: inset 0 0 0 40px rgba(11,15,23,.6); }
+#styles button { white-space: nowrap; letter-spacing: 0; font-size: 12px; padding: 8px 5px; }
+#styles .lk { font-size: 10px; margin-left: 3px; opacity: .9; }
+.swatches .lk { font-size: 11px; }
 #styles button.locked { opacity: .45; }
-#room-info a { color: var(--accent2); margin-left: 6px; cursor: pointer; text-decoration: underline; }
+#room-info a { color: var(--accent2); margin: -6px 0 -6px 4px; padding: 12px 10px; display: inline-block; font-size: inherit; cursor: pointer; text-decoration: underline; }
 #lobby-room { margin-top: 10px; }
 #lobby.compact { max-width: min(92vw, 400px); }
 .names { margin-top: 6px; color: var(--text); font-size: 14px; line-height: 1.5; white-space: normal; }
 .howto { margin-top: 20px; font-size: 14px; color: var(--muted); line-height: 1.7; }
+#menu .tag, .panel .small, #me { text-wrap: balance; }
 .howto b { color: var(--text); font-weight: 600; }
 
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
@@ -104,6 +108,7 @@ button.slim { font-size: 16px; padding: 11px; font-weight: 700; }
 #net .bad { color: #ff6b6b; font-weight: 700; }
 #net .ok { color: #69db7c; }
 #feed { position: absolute; left: max(12px, env(safe-area-inset-left)); bottom: max(12px, env(safe-area-inset-bottom)); font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
+body:has(#dead:not([hidden])) #feed { display: none; }
 #feed div { background: rgba(10,14,22,.6); padding: 4px 10px; border-radius: 8px; transition: opacity .5s; }
 #feed b { font-weight: 700; }
 #feed .tag { color: #ffd43b; font-weight: 900; margin-left: 6px; letter-spacing: .5px; }
@@ -129,7 +134,7 @@ button.slim { font-size: 16px; padding: 11px; font-weight: 700; }
 #touch-right { right: 0; justify-content: flex-end; padding-right: 28px; }
 .touch-ind.on { color: rgba(255,255,255,.55); }
 
-#ranking { text-align: left; max-height: 40vh; overflow: auto; margin: 10px 0 0; padding-left: 28px; font-size: 15px; line-height: 1.6; }
+#ranking { font-variant-numeric: tabular-nums; text-align: left; max-height: 40vh; overflow: auto; margin: 10px 0 0; padding-left: 34px; font-size: 15px; line-height: 1.6; }
 #ranking li.me { color: #ffd43b; font-weight: 700; }
 #ranking .k { color: var(--muted); float: right; }
 

@@ -108,16 +108,18 @@ function xpBar(p) {
   return `<div class="xpbar"><i style="width:${Math.round((100 * p.into) / Math.max(1, p.need))}%"></i></div>`;
 }
 
-let myLevel = 1;
+let myLevel = 1, lastProfile = null;
 function showProfile(p) {
+  lastProfile = p;
   myLevel = p.level;
   if (!p.games && !p.xp) {
-    ui.me.innerHTML = 'Play a match to get on the leaderboard.';
+    ui.me.innerHTML = roomCode ? "Rooms give XP, not leaderboard points." : 'Play a match to get on the leaderboard.';
   } else if (!p.games) {
-    ui.me.innerHTML = `<b>Level ${p.level}</b> · ${p.into} / ${p.need} XP${xpBar(p)}`;
+    ui.me.innerHTML = `<b>Level ${p.level}</b> · ${p.into} / ${p.need} XP${xpBar(p)}` + (roomCode ? '<div class="small">Rooms give XP, not leaderboard points.</div>' : '');
   } else {
     ui.me.innerHTML = `<b>Level ${p.level}</b> · ${p.into} / ${p.need} XP${xpBar(p)}` +
-      `${p.games} game${p.games === 1 ? '' : 's'} · ${p.wins} win${p.wins === 1 ? '' : 's'} · ${p.kills} kill${p.kills === 1 ? '' : 's'} · best #${p.best}`;
+      `${p.games} game${p.games === 1 ? '' : 's'} · ${p.wins} win${p.wins === 1 ? '' : 's'} · ${p.kills} kill${p.kills === 1 ? '' : 's'} · best #${p.best}` +
+      (roomCode ? '<div class="small">Rooms give XP, not leaderboard points.</div>' : '');
   }
   show(ui.me);
   if (mode === 'menu') ui.status.textContent = p.online > 1 ? `${p.online} players online` : '';
@@ -143,7 +145,7 @@ function showLeaderboard(m) {
     : '<li class="empty">Nobody yet. Be the first!</li>';
   const when = { day: 'today', week: 'this week', all: 'so far' }[m.period];
   ui.lbMe.textContent = m.me
-    ? `You're #${m.me.rank} of ${m.players} ${when} with ${m.me.points} points (${m.me.games} game${m.me.games === 1 ? '' : 's'}).`
+    ? `You're #${m.me.rank} of ${m.players} ${when} with ${m.me.points} point${m.me.points === 1 ? '' : 's'} (${m.me.games} game${m.me.games === 1 ? '' : 's'}).`
     : `You haven't played ${when === 'so far' ? 'yet' : when}.`;
 }
 $('lb-open').addEventListener('click', () => openLeaderboard());
@@ -167,7 +169,7 @@ let skin = { color: -1, style: 'plain' };
 try { skin = { ...skin, ...JSON.parse(localStorage.getItem('cr-skin') || '{}') }; } catch {}
 
 function renderSkin() {
-  const lock = (lv) => `\u{1F512}${lv}`;
+  const lock = (lv) => `<span class="lk">\u{1F512}${lv}</span>`;
   $('swatches').innerHTML =
     `<button data-c="-1" class="${skin.color === -1 ? 'on' : ''}" title="Any colour">?</button>` +
     COLORS.map((c, i) => {
@@ -227,6 +229,7 @@ function showRoomInfo() {
   if (roomCode) $('leave-room').addEventListener('click', () => setRoom(null));
   if (!ui.play.disabled) ui.play.textContent = roomCode ? 'JOIN ROOM' : 'PLAY';
   $('friends').textContent = roomCode ? '\u{1F517} Invite' : '\u{1F465} Friends';
+  if (lastProfile) showProfile(lastProfile);
 }
 
 /** Native share sheet on phones, otherwise copy to the clipboard. */
@@ -447,14 +450,14 @@ net.onJson = (m) => {
       show(ui.lobbyRoom, !!m.code);
       if (m.code) {
         ui.lobbyText.textContent = m.waiting ? 'A match is being played' : `Friends' room · starting in ${m.startsIn}s`;
-        ui.lobbySub.innerHTML = (m.waiting ? "You'll join the next round." : 'Invite friends with the link · bots fill the rest') +
+        ui.lobbySub.innerHTML = (m.waiting ? "You'll join the next round." : 'Invite friends with the link&nbsp;·&nbsp;bots fill the rest') +
           `<div class="names">${m.names.map(esc).join(' · ')}</div>`;
         show($('go'), !m.waiting && m.startsIn > 1);
       } else {
         ui.lobbyText.textContent = `Starting in ${m.startsIn}s`;
         ui.lobbySub.textContent = m.players > 1
-          ? `${m.players} players in this match · bots fill the rest`
-          : 'Waiting for players · bots fill the rest';
+          ? `${m.players} players in this match\u00a0·\u00a0bots fill the rest`
+          : 'Waiting for players\u00a0·\u00a0bots fill the rest';
       }
       break;
     case 'start':
@@ -533,7 +536,7 @@ function showEnd(m) {
   }).join('');
   const mine = m.ranking.find((r) => r.id === game.myId);
   if (mine && mine.place > 10) {
-    ui.ranking.innerHTML += `<li class="me" value="${mine.place}">You<span class="k">${mine.kills} kills</span></li>`;
+    ui.ranking.innerHTML += `<li class="me" value="${mine.place}">You<span class="k">${mine.kills} kill${mine.kills === 1 ? '' : 's'}</span></li>`;
   }
   ui.endSub.textContent = 'Next round starting soon…';
   show(ui.end);
