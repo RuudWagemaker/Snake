@@ -103,6 +103,12 @@ button.slim { font-size: 16px; padding: 11px; font-weight: 700; }
 #feed { position: absolute; left: max(12px, env(safe-area-inset-left)); bottom: max(12px, env(safe-area-inset-bottom)); font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
 #feed div { background: rgba(10,14,22,.6); padding: 4px 10px; border-radius: 8px; transition: opacity .5s; }
 #feed b { font-weight: 700; }
+#feed .tag { color: #ffd43b; font-weight: 900; margin-left: 6px; letter-spacing: .5px; }
+.tip {
+  position: absolute; left: 50%; bottom: calc(max(12px, env(safe-area-inset-bottom)) + 34%); transform: translateX(-50%);
+  background: rgba(77,171,247,.92); color: #fff; padding: 10px 16px; border-radius: 12px; font-weight: 700;
+  font-size: 15px; max-width: min(86vw, 420px); text-align: center; box-shadow: 0 6px 24px rgba(0,0,0,.4);
+}
 
 #center-msg {
   position: fixed; left: 50%; top: 24%; transform: translate(-50%, -50%);

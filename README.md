@@ -19,9 +19,11 @@ collect it.
 | Green (you) | ⚡ Speed | you move 1.6× faster | 5 s |
 | | 👻 Ghost | no line behind you, and you pass through lines (not the zone) | 3 s |
 | | │ Thin | your line is half as wide | 6 s |
+| | 🛡 Shield | lines can't kill you (you still draw one; the zone still can) | 4 s |
 | Red (opponents near you) | » Fast | they move 1.6× faster | 4 s |
 | | ▬ Fat | their lines are twice as thick | 5 s |
 | | ⇄ Reverse | their left and right are swapped | 3.5 s |
+| | 🐌 Slow | they move at 0.6× speed | 4 s |
 
 The same power-up stacks. Red ones hit opponents within about a screen's distance of
 the picker, not the whole map. An effect starts 0.27 s after the pickup, so every

@@ -216,8 +216,13 @@ export class Room {
       }
     }
 
+    // Bot strength follows the humans' average level: 0 at level 1, full at level 8.
+    const stats = this.server.stats;
+    const avgLevel = humans.length && stats
+      ? humans.reduce((sum, c) => sum + stats.summary(c.token).level, 0) / humans.length : 8;
     this.round = {
       seed, R0, n,
+      botSkill: Math.max(0, Math.min(1, (avgLevel - 1) / 7)),
       plan: makeZonePlan(seed, R0),
       players,
       grid: new SegGrid(),
@@ -278,12 +283,13 @@ export class Room {
         p.solid = solid;
         p.width = m.width;
         p.ghost = m.ghost;
+        p.shield = m.shield;
       }
 
       // 3. Collisions (after everyone moved, so head-on crashes kill both)
       for (const p of r.players) {
         if (!p.alive) continue;
-        const k = checkHit(r.grid, zone, p.x, p.y, p.id, t, p.width, p.ghost);
+        const k = checkHit(r.grid, zone, p.x, p.y, p.id, t, p.width, p.ghost || p.shield);
         if (k !== null) deaths.set(p, k);
       }
       const alive = r.players.filter((p) => p.alive);
@@ -293,8 +299,9 @@ export class Room {
           if (a.ghost || b.ghost) continue;
           const dx = a.x - b.x, dy = a.y - b.y, d = hitDist(a.width, b.width);
           if (dx * dx + dy * dy < d * d) {
-            if (!deaths.has(a)) deaths.set(a, b.id);
-            if (!deaths.has(b)) deaths.set(b, a.id);
+            // head-on: both crash, unless shielded
+            if (!a.shield && !deaths.has(a)) deaths.set(a, b.id);
+            if (!b.shield && !deaths.has(b)) deaths.set(b, a.id);
           }
         }
       }

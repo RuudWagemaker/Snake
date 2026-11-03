@@ -1,6 +1,6 @@
 // Deterministic simulation rules shared by server and client.
 import {
-  DT, SPEED, TURN_RATE, LINE_WIDTH, SELF_IGNORE_TICKS, GRID_CELL, SPEED_MUL, MIN_WIDTH, MAX_WIDTH,
+  DT, SPEED, TURN_RATE, LINE_WIDTH, SELF_IGNORE_TICKS, GRID_CELL, SPEED_MUL, SLOW_MUL, MIN_WIDTH, MAX_WIDTH,
   GAP_LEN_TICKS, GAP_FIRST_MIN, GAP_FIRST_MAX, GAP_INTERVAL_MIN, GAP_INTERVAL_MAX,
   ZONE_PHASES, TICK_RATE, KILLER_ZONE,
 } from './constants.js';
@@ -38,13 +38,15 @@ export function stepSnake(s, turn, speed = 1) {
  * Writes into and returns `out` ({speed, width, reverse, ghost}).
  */
 export function modsAt(effects, id, t, out = {}) {
-  let speed = 1, width = LINE_WIDTH, reverse = false, ghost = false;
+  let speed = 1, width = LINE_WIDTH, reverse = false, ghost = false, shield = false;
   for (let i = 0; i < effects.length; i++) {
     const e = effects[i];
     if (t < e.start || t >= e.end || !e.targets.includes(id)) continue;
     switch (e.type) {
       case 'speed': case 'fast': speed *= SPEED_MUL; break;
       case 'ghost': ghost = true; break;
+      case 'shield': shield = true; break;   // lines can't kill you, but you still draw one
+      case 'slow': speed *= SLOW_MUL; break;
       case 'thin': width *= 0.5; break;
       case 'fat': width *= 2; break;
       case 'reverse': reverse = !reverse; break;
@@ -54,6 +56,7 @@ export function modsAt(effects, id, t, out = {}) {
   out.width = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, width));
   out.reverse = reverse;
   out.ghost = ghost;
+  out.shield = shield;
   return out;
 }
 

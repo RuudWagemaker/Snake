@@ -15,7 +15,7 @@ const ui = {
   lobbyText: $('lobby-text'), lobbySub: $('lobby-sub'),
   deadTitle: $('dead-title'), deadSub: $('dead-sub'),
   endTitle: $('end-title'), ranking: $('ranking'), endSub: $('end-sub'),
-  alive: $('alive'), kills: $('kills'), zoneInfo: $('zone-info'), feed: $('feed'), effects: $('effects'),
+  tip: $('tip'), alive: $('alive'), kills: $('kills'), zoneInfo: $('zone-info'), feed: $('feed'), effects: $('effects'),
   center: $('center-msg'), touchL: $('touch-left'), touchR: $('touch-right'),
 };
 
@@ -332,6 +332,40 @@ function feed(html) {
   setTimeout(() => div.remove(), 5000);
 }
 
+// Multi-kills: kills by the same snake within 3 s. "First blood" for the first kill of a round.
+let streaks = new Map(), firstBlood = false;
+function killTag(killer, tick) {
+  if (!firstBlood) { firstBlood = true; return 'FIRST BLOOD'; }
+  const st = streaks.get(killer.id);
+  const n = st && tick - st.tick <= 3 * TICK_RATE ? st.n + 1 : 1;
+  streaks.set(killer.id, { n, tick });
+  return n === 2 ? 'DOUBLE KILL' : n === 3 ? 'TRIPLE KILL' : n >= 4 ? 'RAMPAGE' : '';
+}
+
+// Tips during the first few matches (until the player has seen them all).
+const TIPS = [
+  { at: 2, text: 'Gaps open in every line now and then. You can slip through them!' },
+  { at: 12, text: 'Green power-ups help you. Red ones hit the players near you.' },
+  { at: 22, text: 'The zone is shrinking soon. Stay inside the circle!' },
+  { at: 34, text: 'Cut others off: make them crash into your line to score kills.' },
+];
+let tipsSeen = 0;
+try { tipsSeen = Number(localStorage.getItem('cr-tips')) || 0; } catch {}
+let tipUntil = 0;
+function updateTip(serverTick, now) {
+  if (tipsSeen < TIPS.length && game.controlling) {
+    const t = TIPS[tipsSeen];
+    if ((serverTick - game.playTick) / TICK_RATE >= t.at) {
+      ui.tip.textContent = t.text;
+      show(ui.tip);
+      tipUntil = now + 5000;
+      tipsSeen++;
+      try { localStorage.setItem('cr-tips', String(tipsSeen)); } catch {}
+    }
+  }
+  if (!ui.tip.hidden && (now > tipUntil || !game.controlling)) show(ui.tip, false);
+}
+
 let flashUntil = 0;
 game.onEvent = (ev) => {
   if (ev.type === 'pickup') {
@@ -348,7 +382,14 @@ game.onEvent = (ev) => {
   if (ev.killerId === KILLER_ZONE) feed(`${nameHtml(s)} was caught by the zone`);
   else if (ev.killerId === KILLER_LEFT) feed(`${nameHtml(s)} left`);
   else if (ev.killer === s) feed(`${nameHtml(s)} crashed into their own line`);
-  else if (ev.killer) feed(`${nameHtml(ev.killer)} cut off ${nameHtml(s)}`);
+  else if (ev.killer) {
+    const tag = killTag(ev.killer, ev.msg.tick);
+    feed(`${nameHtml(ev.killer)} cut off ${nameHtml(s)}${tag ? `<span class="tag">${tag}</span>` : ''}`);
+    if (tag && ev.killer === game.me && !me) {
+      ui.center.innerHTML = `<span style="color:#ffd43b;font-size:0.55em">${tag}!</span>`;
+      flashUntil = performance.now() + 1200;
+    }
+  }
 
   if (me) {
     spectateId = ev.killer && ev.killer !== s && ev.killer.alive ? ev.killer.id : null;
@@ -425,6 +466,9 @@ net.onJson = (m) => {
       spectateId = null;
       ui.feed.innerHTML = '';
       ui.effects.innerHTML = '';
+      streaks = new Map();
+      firstBlood = false;
+      show(ui.tip, false);
       ui.result.innerHTML = '';
       lastResult = null;
       show(ui.shareMsg, false);
@@ -572,6 +616,7 @@ function frame(now) {
   if (now - hudAt > 200) {
     hudAt = now;
     updateHud(zone, serverTick);
+    updateTip(serverTick, now);
     diag.render(now);
   }
 }

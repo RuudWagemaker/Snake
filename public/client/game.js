@@ -453,7 +453,7 @@ export class ClientGame {
         stepSnake(p, m.reverse ? -tr : tr, m.speed);
         // Stop at an obvious crash instead of sliding through a line while we
         // wait for the server's verdict.
-        if (checkHit(this.grid, zoneAt(this.plan, tt - this.playTick), p.x, p.y, this.myId, tt, m.width, m.ghost) !== null) {
+        if (checkHit(this.grid, zoneAt(this.plan, tt - this.playTick), p.x, p.y, this.myId, tt, m.width, m.ghost || m.shield) !== null) {
           this.predStopped = true;
         }
         // Hide a power-up we're about to collect (the server confirms it shortly).
@@ -557,7 +557,7 @@ export class ClientGame {
       const nx = { x: st.x, y: st.y, a: st.a };
       modsAt(this.effects, s.id, t, m);
       if (t > this.playTick) stepSnake(nx, m.reverse ? -turnAt(j) : turnAt(j), m.speed);
-      if (t > this.playTick && checkHit(this.grid, zone, nx.x, nx.y, s.id, t, m.width, m.ghost) !== null) {
+      if (t > this.playTick && checkHit(this.grid, zone, nx.x, nx.y, s.id, t, m.width, m.ghost || m.shield) !== null) {
         return { pts, head: st };
       }
       if (j > whole) {

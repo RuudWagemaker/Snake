@@ -27,11 +27,14 @@ const OPTIONS = [[0, 0], [-1, 999], [1, 999], [-1, 8], [1, 8], [-1, 18], [1, 18]
 export function botThink(p, round, zone, zt, t) {
   let b = p.brain;
   if (!b) {
+    // Room skill k (0 = beginners, 1 = experienced players) sets how good the
+    // bots are, so new players aren't thrown in with the sharpest bots.
+    const k = round.botSkill ?? 1;
     b = p.brain = {
       next: 0,
       turn: 0,
-      horizon: 22 + Math.floor(Math.random() * 26),   // skill: how far it looks ahead
-      react: 2 + Math.floor(Math.random() * 3),        // skill: how often it thinks
+      horizon: Math.round(14 + 8 * k + Math.random() * (18 + 8 * k)), // how far it looks ahead
+      react: 2 + Math.floor(Math.random() * 3) + (k < 0.4 ? 1 : 0),   // how often it thinks
       wander: 0,
       wanderUntil: 0,
       spin: 0, // decaying sum of recent turning; large = about to close a loop

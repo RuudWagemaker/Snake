@@ -202,9 +202,16 @@ export class Renderer {
         ctx.arc(hx + Math.cos(ha) * hr * 0.3, hy + Math.sin(ha) * hr * 0.3, hr * 0.38, 0, TAU);
         ctx.fill();
         ctx.globalAlpha = 1;
+        if (m.shield) {
+          ctx.strokeStyle = GOOD;
+          ctx.globalAlpha = 0.6 + 0.3 * Math.sin(f.now / 110);
+          ctx.lineWidth = 2.5;
+          ctx.beginPath(); ctx.arc(hx, hy, hr + 8, 0, TAU); ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
         if (m.reverse || m.speed !== 1 || m.ghost || m.width !== LINE_WIDTH) {
           // a ring shows a snake is powered up (green = its own, red = hit)
-          ctx.strokeStyle = m.reverse || (m.width > LINE_WIDTH) ? BAD : GOOD;
+          ctx.strokeStyle = m.reverse || m.width > LINE_WIDTH || m.speed < 1 ? BAD : GOOD;
           ctx.lineWidth = 1.5;
           ctx.setLineDash([3, 3]);
           ctx.beginPath(); ctx.arc(hx, hy, hr + 5, 0, TAU); ctx.stroke();
