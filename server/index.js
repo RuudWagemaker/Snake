@@ -112,10 +112,10 @@ async function serveStatic(req, res, ctx = {}) {
   }
 }
 
-export async function startServer({ port = 3000, host, statsFile = null, adminKey = null } = {}) {
+export async function startServer({ port = 3000, host, statsFile = null, adminKey = null, googleClientId = null, verifyGoogle } = {}) {
   await initRtc();
   const stats = new Stats(statsFile);
-  const game = new GameServer(BUILD, stats);
+  const game = new GameServer(BUILD, stats, { googleClientId, ...(verifyGoogle ? { verifyGoogle } : {}) });
   const server = http.createServer((req, res) => serveStatic(req, res, { stats, game, adminKey }));
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096, perMessageDeflate: false });
   wss.on('connection', (ws) => game.onConnection(ws));
@@ -142,7 +142,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   // STATS_FILE: where player profiles and leaderboards are kept (unset = memory only)
   const statsFile = process.env.STATS_FILE || null;
   // ADMIN_KEY: password for the private usage page /admin?key=... (unset = page off)
-  startServer({ port, host: process.env.HOST || undefined, statsFile, adminKey: process.env.ADMIN_KEY || null }).then(({ port, game }) => {
+  startServer({ port, host: process.env.HOST || undefined, statsFile, adminKey: process.env.ADMIN_KEY || null,
+    // GOOGLE_CLIENT_ID: OAuth client id for "Sign in with Google" (unset = guests only)
+    googleClientId: process.env.GOOGLE_CLIENT_ID || null }).then(({ port, game }) => {
     console.log(`Curve Royale (build ${BUILD}) running on http://localhost:${port}` +
       (statsFile ? `, stats in ${statsFile}` : ', stats in memory only (set STATS_FILE to keep them)'));
     // Save the stats before a restart (docker stop sends SIGTERM).

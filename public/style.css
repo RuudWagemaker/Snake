@@ -82,6 +82,10 @@ button.slim { font-size: 16px; padding: 11px; font-weight: 700; }
 .missions .m.done span { text-decoration: line-through; }
 .missions .m.done b { color: #51cf66; }
 .missions .m.done i { color: var(--muted); }
+.account { margin: 4px 0 10px; }
+.account #gbtn { display: flex; justify-content: center; min-height: 44px; }
+.account .small { margin-top: 4px; }
+.account a { color: var(--accent2); margin-left: 4px; padding: 12px 10px; margin: -6px 0 -6px 4px; display: inline-block; cursor: pointer; text-decoration: underline; }
 .mdone { color: #51cf66; font-weight: 700; font-size: 14px; margin: 2px 0; }
 .swatches { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; margin: 8px 0 4px; }
 .swatches button { margin: 0; padding: 0; aspect-ratio: 1; border-radius: 50%; font-size: 13px; border: 3px solid transparent; background: #263049; }

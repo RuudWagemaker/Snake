@@ -244,3 +244,45 @@ test('admin page needs the key', { timeout: 10000 }, async () => {
     await off.close();
   }
 });
+
+test('Google accounts: link, other device, keep the better profile', () => {
+  const s = new Stats();
+  const C = 'c'.repeat(32);
+  s.record(A, 'Ann', 1, 10, 3);                       // phone: some progress
+  assert.equal(s.login('g1', A), A);                  // first sign-in links it
+  assert.equal(s.get(A).account, true);
+  assert.equal(s.login('g1', B), A);                  // laptop: switch to the account's profile
+  s.record(C, 'Cee', 1, 24, 10); s.record(C, 'Cee', 1, 24, 10); // tablet guest with more XP
+  assert.equal(s.login('g1', C), A);                  // still the account's profile: never split
+  s.login('g2', C);                                   // the tablet's guest becomes another account
+  assert.equal(s.accounts.get('g2'), C);
+  assert.notEqual(s.login('g4', C), C, "another account can't take a linked profile");
+  assert.match(s.login('g3', null), /^[a-f0-9]{32}$/); // no token: a fresh one
+  s.prune(Date.now() + 365 * 86400000);
+  assert.ok(s.get(C), 'linked profiles are never pruned');
+});
+
+test('sign in over the WebSocket (Google check stubbed)', { timeout: 10000 }, async () => {
+  const verifyGoogle = async (cred, clientId) => (cred === 'a.b.c' && clientId === 'cid' ? { sub: 'g1', name: 'Ann' } : null);
+  const srv = await startServer({ port: 0, googleClientId: 'cid', verifyGoogle });
+  try {
+    const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
+    const msgs = [];
+    const next = (t, n = 1) => new Promise((resolve) => {
+      const check = () => { const m = msgs.filter((x) => x.t === t); if (m.length >= n) resolve(m[n - 1]); else setTimeout(check, 10); };
+      check();
+    });
+    ws.on('message', (d, bin) => { if (!bin) msgs.push(JSON.parse(d.toString())); });
+    const hello = await next('hello');
+    assert.equal(hello.google, 'cid');
+    ws.send(JSON.stringify({ t: 'login', credential: 'x.y.z', token: A }));
+    assert.equal((await next('login')).ok, false);
+    ws.send(JSON.stringify({ t: 'login', credential: 'a.b.c', token: A }));
+    const ok = await next('login', 2);
+    assert.deepEqual(ok, { t: 'login', ok: true, token: A, name: 'Ann' });
+    assert.equal(srv.game.stats.accounts.get('g1'), A);
+    ws.close();
+  } finally {
+    await srv.close();
+  }
+});

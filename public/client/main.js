@@ -99,7 +99,75 @@ function token() {
   }
   return t;
 }
-const TOKEN = token();
+let TOKEN = token();
+
+// ---------------------------------------------------------------- Google sign-in
+// Optional: only offered when the server has a Google client id. Signing in
+// links this browser's progress to the Google account, or (on another device)
+// switches to the account's progress. Signing out starts a fresh guest.
+
+let googleReady = false;
+function accountName() {
+  try { return localStorage.getItem('cr-account'); } catch { return null; }
+}
+function showAccount() {
+  const el = $('account');
+  const name = accountName();
+  if (name !== null) {
+    el.innerHTML = `Signed in${name ? ' as <b>' + esc(name) + '</b>' : ''}<a id="sign-out">sign out</a>`;
+    $('sign-out').addEventListener('click', signOut);
+    show(el);
+  } else if (googleReady) {
+    el.innerHTML = '<div id="gbtn"></div><div class="small">Sign in to keep your level on every device</div>';
+    window.google.accounts.id.renderButton($('gbtn'), { theme: 'filled_black', size: 'large', shape: 'pill', text: 'signin_with', width: 240 });
+    show(el);
+  } else {
+    show(el, false);
+  }
+}
+function setupGoogle(clientId) {
+  if (googleReady || document.getElementById('gsi')) return;
+  const s = document.createElement('script');
+  s.id = 'gsi';
+  s.src = 'https://accounts.google.com/gsi/client';
+  s.async = true;
+  s.onload = () => {
+    window.google.accounts.id.initialize({
+      client_id: clientId,
+      callback: (r) => { if (r && r.credential) net.send({ t: 'login', credential: r.credential, token: TOKEN }); },
+    });
+    googleReady = true;
+    showAccount();
+  };
+  document.head.appendChild(s);
+}
+function onLogin(m) {
+  if (!m.ok || !/^[a-f0-9]{32}$/.test(m.token || '')) {
+    ui.status.textContent = m.busy ? 'Too many sign-in attempts. Try again in a minute.' : 'Sign-in failed. Please try again.';
+    return;
+  }
+  try {
+    // Keep this browser's guest progress, to get it back when signing out.
+    if (accountName() === null && TOKEN !== m.token) localStorage.setItem('cr-guest', TOKEN);
+    localStorage.setItem('cr-token', m.token);
+    localStorage.setItem('cr-account', m.name || '');
+  } catch {}
+  TOKEN = m.token;
+  showAccount();
+  requestProfile();
+}
+function signOut() {
+  try {
+    const guest = localStorage.getItem('cr-guest');
+    if (guest && /^[a-f0-9]{32}$/.test(guest)) localStorage.setItem('cr-token', guest); // back to this browser's guest progress
+    else localStorage.removeItem('cr-token');
+    localStorage.removeItem('cr-guest');
+    localStorage.removeItem('cr-account');
+  } catch {}
+  try { window.google?.accounts.id.disableAutoSelect(); } catch {}
+  location.reload(); // the guest token (or a fresh one) on the next load
+}
+showAccount();
 
 function requestProfile() {
   net.send({ t: 'profile', token: TOKEN });
@@ -453,6 +521,7 @@ net.onJson = (m) => {
     case 'hello':
       if (m.build && BUILD && m.build !== BUILD && reloadForNewVersion()) return;
       if (m.rtc) net.startRtc();
+      if (m.google) setupGoogle(m.google);
       ui.status.textContent = m.online > 1 ? `${m.online} players online` : '';
       break;
     case 'lobby':
@@ -502,6 +571,9 @@ net.onJson = (m) => {
       break;
     case 'profile':
       showProfile(m);
+      break;
+    case 'login':
+      onLogin(m);
       break;
     case 'lb':
       showLeaderboard(m);

@@ -178,6 +178,7 @@ visitors.
 | `HOST` | Address to listen on (default: all) |
 | `RTC_PORT` | UDP port for WebRTC. Unset means WebSocket only. Needs the optional `node-datachannel` package |
 | `STATS_FILE` | JSON file for player profiles and leaderboards (unset: memory only) |
+| `GOOGLE_CLIENT_ID` | OAuth client id (Web) for "Sign in with Google"; authorized JavaScript origin = the game's URL (unset: guests only) |
 | `ADMIN_KEY` | Password for the private usage page `/admin?key=…` (unset: page off) |
 | `RTC_PUBLIC_IP` | Public IP to announce, if the server's network card has a private IP (1:1 NAT) |
 

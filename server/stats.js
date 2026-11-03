@@ -5,6 +5,7 @@
 // them all to a JSON file (STATS_FILE) at most every few seconds.
 import { readFileSync, writeFileSync, renameSync, mkdirSync, readdirSync, unlinkSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { cleanName } from './names.js';
 import { addMatch, missionList } from './missions.js';
 
@@ -62,6 +63,7 @@ export class Stats {
     this.saveTimer = null;
     this.lbCache = new Map();   // period -> {at, list}
     this.daily = new Map();     // day -> usage numbers for the admin page (see usage())
+    this.accounts = new Map();  // Google account id (sub) -> token of its profile
     if (file) this.load();
   }
 
@@ -72,6 +74,9 @@ export class Stats {
         if (!validToken(token) || !p || typeof p !== 'object') continue;
         p.name = cleanName(p.name); // names saved before the filter existed
         this.profiles.set(token, p);
+      }
+      for (const [sub, token] of Object.entries(data.accounts || {})) {
+        if (validToken(token)) this.accounts.set(sub, token);
       }
       for (const [day, d] of Object.entries(data.daily || {})) {
         if (d && typeof d === 'object') this.daily.set(day, { ...d, visitors: new Set(d.visitors || []), players: new Set(d.players || []) });
@@ -99,7 +104,7 @@ export class Stats {
       const tmp = this.file + '.tmp';
       const daily = {};
       for (const [day, d] of this.daily) daily[day] = { ...d, visitors: [...d.visitors], players: [...d.players] };
-      writeFileSync(tmp, JSON.stringify({ v: 1, profiles: Object.fromEntries(this.profiles), daily }));
+      writeFileSync(tmp, JSON.stringify({ v: 1, profiles: Object.fromEntries(this.profiles), daily, accounts: Object.fromEntries(this.accounts) }));
       renameSync(tmp, this.file); // atomic: a crash never leaves half a file
     } catch (err) {
       console.error(`[stats] could not save ${this.file}:`, err.message);
@@ -127,7 +132,7 @@ export class Stats {
 
   prune(now = Date.now()) {
     for (const [token, p] of this.profiles) {
-      if (p.games < 3 && now - (p.last || 0) > PRUNE_DAYS * 86400000) this.profiles.delete(token);
+      if (!p.account && p.games < 3 && now - (p.last || 0) > PRUNE_DAYS * 86400000) this.profiles.delete(token);
     }
   }
 
@@ -181,6 +186,37 @@ export class Stats {
     }));
   }
 
+  newProfile(token, name, now = Date.now()) {
+    const p = { name, games: 0, wins: 0, kills: 0, best: 0, xp: 0, points: 0, created: now, last: now, day: null, week: null };
+    this.profiles.set(token, p);
+    return p;
+  }
+
+  // ------------------------------------------------------------ Google accounts
+
+  /**
+   * A verified Google sign-in. Returns the token this browser should use from now on.
+   * - New account: this browser's guest progress becomes the account's.
+   * - Known account: always the account's own profile. A guest profile on the
+   *   other device is left alone (the browser gets it back when signing out), so
+   *   progress is never split or handed to someone else on a borrowed phone.
+   */
+  login(sub, token, now = Date.now()) {
+    if (typeof sub !== 'string' || !sub) return null;
+    const linked = this.accounts.get(sub) || null;
+    let cur = validToken(token) ? token : null;
+    if (cur && cur !== linked) {
+      for (const [s, t] of this.accounts) if (t === cur && s !== sub) { cur = null; break; } // belongs to another account
+    }
+    const use = linked || cur || randomBytes(16).toString('hex');
+    this.accounts.set(sub, use);
+    const p = this.profiles.get(use) || this.newProfile(use, 'Player', now);
+    p.account = true;
+    p.last = now;
+    this.scheduleSave();
+    return use;
+  }
+
   get(token) {
     return validToken(token) ? this.profiles.get(token) || null : null;
   }
@@ -202,8 +238,7 @@ export class Stats {
     let p = this.profiles.get(token);
     if (!p) {
       this.day(now).newPlayers++;
-      p = { name, games: 0, wins: 0, kills: 0, best: 0, xp: 0, points: 0, created: now, last: now, day: null, week: null };
-      this.profiles.set(token, p);
+      p = this.newProfile(token, name, now);
     }
     const points = matchPoints(place, n, kills);
     const xp = matchXp(points);

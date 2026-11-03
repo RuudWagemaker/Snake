@@ -6,6 +6,7 @@ import { Room } from './room.js';
 import { InputBuffer } from './inputs.js';
 import { RtcPeer, rtcEnabled } from './rtc.js';
 import { cleanName } from './names.js';
+import { verifyGoogleToken } from './google.js';
 import { Stats, validToken } from './stats.js';
 
 const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
@@ -98,6 +99,30 @@ class Client {
     ws.on('error', () => {});
   }
 
+  /** "Sign in with Google": link this browser to the account, or switch to the account's profile. */
+  async login(msg) {
+    const g = this.server.google;
+    if (!g.clientId || this.loggingIn) return;
+    // Each attempt costs a call to Google: a few per connection, and a cap for the whole server.
+    const now = Date.now();
+    this.logins = (this.logins || []).filter((t) => now - t < 60000);
+    g.recent = (g.recent || []).filter((t) => now - t < 60000);
+    if (this.logins.length >= 5 || g.recent.length >= 120) { this.send({ t: 'login', ok: false, busy: true }); return; }
+    this.logins.push(now);
+    g.recent.push(now);
+    this.loggingIn = true;
+    try {
+      const who = await g.verify(msg.credential, g.clientId);
+      if (!who) { this.send({ t: 'login', ok: false }); return; }
+      const token = this.server.stats.login(who.sub, validToken(msg.token) ? msg.token : this.token);
+      if (!token) { this.send({ t: 'login', ok: false }); return; }
+      this.token = token;
+      this.send({ t: 'login', ok: true, token, name: who.name });
+    } finally {
+      this.loggingIn = false;
+    }
+  }
+
   /** Inputs arrive over WebSocket and (if set up) UDP; duplicates are fine. */
   onInput(data) {
     const list = decodeInputList(data);
@@ -146,6 +171,9 @@ class Client {
         this.server.stats.visit(this.token);
         this.send({ t: 'profile', ...this.server.stats.summary(this.token), online: this.server.clients.size });
         break;
+      case 'login':
+        this.login(msg);
+        break;
       case 'lb':
         this.send({ t: 'lb', ...this.server.stats.leaderboard(msg.period, this.token) });
         break;
@@ -189,9 +217,10 @@ class Client {
 }
 
 export class GameServer {
-  constructor(build = 'dev', stats = new Stats()) {
+  constructor(build = 'dev', stats = new Stats(), { googleClientId = null, verifyGoogle = verifyGoogleToken } = {}) {
     this.build = build;
     this.stats = stats;
+    this.google = { clientId: googleClientId, verify: verifyGoogle };
     this.rooms = new Set();
     this.clients = new Set();
     this.nextClientId = 1;
@@ -229,7 +258,7 @@ export class GameServer {
     const c = new Client(ws, this);
     this.clients.add(c);
     this.stats?.online(this.clients.size);
-    c.send({ t: 'hello', online: this.clients.size, build: this.build, rtc: rtcEnabled() });
+    c.send({ t: 'hello', online: this.clients.size, build: this.build, rtc: rtcEnabled(), google: this.google.clientId || undefined });
   }
 
   onClose(c) {
