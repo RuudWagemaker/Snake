@@ -10,6 +10,7 @@ services:
       PORT: 3000
       RTC_PORT: ${RTC_PORT:-40000} # UDP port for WebRTC (open it in the firewall)
       RTC_PUBLIC_IP: ${RTC_PUBLIC_IP:-}
+      ADMIN_KEY: ${ADMIN_KEY:-}     # password for /admin (usage numbers); set in deploy/.env
     volumes:
       - game_data:/data            # player profiles and leaderboards (survives redeploys)
     logging:

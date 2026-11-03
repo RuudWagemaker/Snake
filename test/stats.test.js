@@ -58,6 +58,7 @@ test('stats survive a restart', () => {
     const again = new Stats(file);
     assert.equal(again.summary(A).games, 1);
     assert.equal(again.summary(A).kills, 1);
+    assert.equal(again.usage()[0].players, 1); // usage numbers survive too
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -209,4 +210,37 @@ test('skins: only what your level has unlocked, and no two snakes share a colour
   assert.equal(cols[0], COLORS[5]);
   assert.notEqual(cols[1], COLORS[5]);
   assert.equal(new Set(cols).size, cols.length);
+});
+
+test('usage numbers per day for the admin page', () => {
+  const s = new Stats();
+  const now = Date.UTC(2026, 3, 1, 12);
+  s.visit(A, now); s.visit(A, now); s.visit(B, now);
+  s.online(3, now); s.online(2, now);
+  s.record(A, 'Ann', 1, 10, 2, now);
+  s.record(A, 'Ann', 2, 10, 0, now);
+  s.matchPlayed({ secs: 60, humans: 1 }, now);
+  s.matchPlayed({ room: true, secs: 120, humans: 1 }, now);
+  const [d] = s.usage();
+  assert.deepEqual(d, { day: '2026-04-01', visitors: 2, players: 1, newPlayers: 1, matches: 2, roomMatches: 1, avgMatchSecs: 90, matchesPerPlayer: 2, peakOnline: 3 });
+});
+
+test('admin page needs the key', { timeout: 10000 }, async () => {
+  const srv = await startServer({ port: 0, adminKey: 'secret-key' });
+  try {
+    const base = `http://localhost:${srv.port}/admin`;
+    assert.equal((await fetch(base)).status, 404);
+    assert.equal((await fetch(base + '?key=wrong')).status, 404);
+    const ok = await fetch(base + '?key=secret-key');
+    assert.equal(ok.status, 200);
+    assert.match(await ok.text(), /Online now/);
+  } finally {
+    await srv.close();
+  }
+  const off = await startServer({ port: 0 });
+  try {
+    assert.equal((await fetch(`http://localhost:${off.port}/admin?key=`)).status, 404);
+  } finally {
+    await off.close();
+  }
 });

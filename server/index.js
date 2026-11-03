@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { readFileSync, readdirSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
@@ -37,12 +37,56 @@ function computeBuild(dir) {
 }
 export const BUILD = computeBuild(PUBLIC_DIR);
 
-async function serveStatic(req, res) {
+function keyOk(given, key) {
+  if (!key || typeof given !== 'string') return false;
+  const a = createHash('sha256').update(given).digest(), b = createHash('sha256').update(key).digest();
+  return timingSafeEqual(a, b);
+}
+
+const escHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/** Private usage page: /admin?key=ADMIN_KEY. Without the right key it doesn't exist (404). */
+export function adminPage(stats, game) {
+  const rows = stats.usage(30);
+  const cols = [
+    ['day', 'Day'], ['visitors', 'Visitors'], ['players', 'Played'], ['newPlayers', 'New'],
+    ['matches', 'Matches'], ['roomMatches', 'In rooms'], ['avgMatchSecs', 'Avg match (s)'],
+    ['matchesPerPlayer', 'Matches / player'], ['peakOnline', 'Peak online'],
+  ];
+  const head = cols.map(([, t]) => `<th>${t}</th>`).join('');
+  const body = rows.map((r) => `<tr>${cols.map(([k]) => `<td>${escHtml(r[k])}</td>`).join('')}</tr>`).join('') ||
+    `<tr><td colspan="${cols.length}">No data yet</td></tr>`;
+  const online = game ? game.clients.size : 0;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Curve Royale stats</title><style>
+body{font:15px system-ui,sans-serif;background:#0b0f17;color:#e8ecf4;margin:16px}
+h1{font-size:22px;margin:0 0 4px}p{color:#8a94a8;margin:0 0 14px}
+.wrap{overflow-x:auto}table{border-collapse:collapse;white-space:nowrap}
+th,td{padding:6px 10px;text-align:right;border-bottom:1px solid #263049}th{color:#8a94a8;font-weight:600}
+td:first-child,th:first-child{text-align:left;position:sticky;left:0;background:#0b0f17}
+b{color:#51cf66}</style></head><body>
+<h1>Curve Royale</h1><p>Online now: <b>${online}</b> · profiles: <b>${stats.profiles.size}</b> · build ${escHtml(BUILD)}</p>
+<div class="wrap"><table><tr>${head}</tr>${body}</table></div>
+<p style="margin-top:14px">Visitors = opened the game. Played = finished at least one match. New = first match ever. Days run in Amsterdam time.</p>
+</body></html>`;
+}
+
+async function serveStatic(req, res, ctx = {}) {
   let urlPath;
   try {
     urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   } catch {
     res.writeHead(400).end();
+    return;
+  }
+  if (urlPath === '/admin') {
+    const key = new URL(req.url, 'http://x').searchParams.get('key');
+    if (ctx.stats && keyOk(key, ctx.adminKey)) {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
+      res.end(adminPage(ctx.stats, ctx.game));
+    } else {
+      res.writeHead(404, { 'content-type': 'text/plain' }).end('not found');
+    }
     return;
   }
   if (urlPath === '/healthz') {
@@ -68,12 +112,12 @@ async function serveStatic(req, res) {
   }
 }
 
-export async function startServer({ port = 3000, host, statsFile = null } = {}) {
+export async function startServer({ port = 3000, host, statsFile = null, adminKey = null } = {}) {
   await initRtc();
-  const server = http.createServer(serveStatic);
-  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096, perMessageDeflate: false });
   const stats = new Stats(statsFile);
   const game = new GameServer(BUILD, stats);
+  const server = http.createServer((req, res) => serveStatic(req, res, { stats, game, adminKey }));
+  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096, perMessageDeflate: false });
   wss.on('connection', (ws) => game.onConnection(ws));
   game.start();
   return new Promise((resolve) => {
@@ -97,7 +141,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const port = Number(process.env.PORT) || 3000;
   // STATS_FILE: where player profiles and leaderboards are kept (unset = memory only)
   const statsFile = process.env.STATS_FILE || null;
-  startServer({ port, host: process.env.HOST || undefined, statsFile }).then(({ port, game }) => {
+  // ADMIN_KEY: password for the private usage page /admin?key=... (unset = page off)
+  startServer({ port, host: process.env.HOST || undefined, statsFile, adminKey: process.env.ADMIN_KEY || null }).then(({ port, game }) => {
     console.log(`Curve Royale (build ${BUILD}) running on http://localhost:${port}` +
       (statsFile ? `, stats in ${statsFile}` : ', stats in memory only (set STATS_FILE to keep them)'));
     // Save the stats before a restart (docker stop sends SIGTERM).

@@ -41,7 +41,8 @@ and the 🏆 leaderboard shows the top 20 for today, this week (from Monday) and
 time, in Amsterdam time. Bots never count.
 
 Profiles are kept in `STATS_FILE` (in Docker: `/data/stats.json` on the `game_data`
-volume, so they survive redeploys). Without `STATS_FILE` they're only kept in memory.
+volume, so they survive redeploys). Without `STATS_FILE` they're only kept in memory. A copy is kept once a day in
+`backups/` next to it (last 14 days).
 Nicknames with slurs or abuse are replaced by "Player".
 
 ## Play with friends
@@ -177,6 +178,7 @@ visitors.
 | `HOST` | Address to listen on (default: all) |
 | `RTC_PORT` | UDP port for WebRTC. Unset means WebSocket only. Needs the optional `node-datachannel` package |
 | `STATS_FILE` | JSON file for player profiles and leaderboards (unset: memory only) |
+| `ADMIN_KEY` | Password for the private usage page `/admin?key=…` (unset: page off) |
 | `RTC_PUBLIC_IP` | Public IP to announce, if the server's network card has a private IP (1:1 NAT) |
 
 Health check: `GET /healthz`.

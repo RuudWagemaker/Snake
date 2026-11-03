@@ -143,6 +143,7 @@ class Client {
       case 'profile':
         // Sent once after connecting: who am I, and how am I doing?
         if (validToken(msg.token)) this.token = msg.token;
+        this.server.stats.visit(this.token);
         this.send({ t: 'profile', ...this.server.stats.summary(this.token), online: this.server.clients.size });
         break;
       case 'lb':
@@ -227,6 +228,7 @@ export class GameServer {
   onConnection(ws) {
     const c = new Client(ws, this);
     this.clients.add(c);
+    this.stats?.online(this.clients.size);
     c.send({ t: 'hello', online: this.clients.size, build: this.build, rtc: rtcEnabled() });
   }
 

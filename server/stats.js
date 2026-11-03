@@ -13,6 +13,7 @@ const LB_SIZE = 20;
 const LB_CACHE_MS = 5000;
 const PRUNE_DAYS = 60;          // forget one-off visitors after this long
 const TZ = 'Europe/Amsterdam';  // when "today" and "this week" start
+const DAILY_DAYS = 60;          // days of usage numbers kept for the admin page
 const BACKUP_DAYS = 14;         // daily copies of the stats file kept in backups/
 
 export const PERIODS = ['day', 'week', 'all'];
@@ -60,6 +61,7 @@ export class Stats {
     this.profiles = new Map();  // token -> profile
     this.saveTimer = null;
     this.lbCache = new Map();   // period -> {at, list}
+    this.daily = new Map();     // day -> usage numbers for the admin page (see usage())
     if (file) this.load();
   }
 
@@ -70,6 +72,9 @@ export class Stats {
         if (!validToken(token) || !p || typeof p !== 'object') continue;
         p.name = cleanName(p.name); // names saved before the filter existed
         this.profiles.set(token, p);
+      }
+      for (const [day, d] of Object.entries(data.daily || {})) {
+        if (d && typeof d === 'object') this.daily.set(day, { ...d, visitors: new Set(d.visitors || []), players: new Set(d.players || []) });
       }
       console.log(`[stats] loaded ${this.profiles.size} profiles from ${this.file}`);
     } catch (err) {
@@ -92,7 +97,9 @@ export class Stats {
     try {
       mkdirSync(path.dirname(this.file), { recursive: true });
       const tmp = this.file + '.tmp';
-      writeFileSync(tmp, JSON.stringify({ v: 1, profiles: Object.fromEntries(this.profiles) }));
+      const daily = {};
+      for (const [day, d] of this.daily) daily[day] = { ...d, visitors: [...d.visitors], players: [...d.players] };
+      writeFileSync(tmp, JSON.stringify({ v: 1, profiles: Object.fromEntries(this.profiles), daily }));
       renameSync(tmp, this.file); // atomic: a crash never leaves half a file
     } catch (err) {
       console.error(`[stats] could not save ${this.file}:`, err.message);
@@ -124,6 +131,56 @@ export class Stats {
     }
   }
 
+  // ------------------------------------------------------------ usage numbers
+
+  /** Today's usage record (created on first use; old days dropped). */
+  day(now = Date.now()) {
+    const key = periodKeys(now).day;
+    let d = this.daily.get(key);
+    if (!d) {
+      d = { visitors: new Set(), players: new Set(), newPlayers: 0, matches: 0, roomMatches: 0, matchSecs: 0, humanSlots: 0, peakOnline: 0 };
+      this.daily.set(key, d);
+      const keys = [...this.daily.keys()].sort();
+      for (const k of keys.slice(0, Math.max(0, keys.length - DAILY_DAYS))) this.daily.delete(k);
+    }
+    return d;
+  }
+
+  /** Someone opened the game (or came back to the menu). */
+  visit(token, now = Date.now()) {
+    if (validToken(token)) this.day(now).visitors.add(token);
+  }
+
+  online(n, now = Date.now()) {
+    const d = this.day(now);
+    if (n > d.peakOnline) d.peakOnline = n;
+  }
+
+  /** A match with at least one human ended. */
+  matchPlayed({ room = false, secs = 0, humans = 0 }, now = Date.now()) {
+    const d = this.day(now);
+    d.matches++;
+    if (room) d.roomMatches++;
+    d.matchSecs += secs;
+    d.humanSlots += humans;
+    this.scheduleSave();
+  }
+
+  /** Numbers per day, newest first, for the admin page. */
+  usage(days = 30) {
+    return [...this.daily.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, days).map(([day, d]) => ({
+      day,
+      visitors: d.visitors.size,
+      players: d.players.size,
+      newPlayers: d.newPlayers,
+      matches: d.matches,
+      roomMatches: d.roomMatches,
+      avgMatchSecs: d.matches ? Math.round(d.matchSecs / d.matches) : 0,
+      matchesPerPlayer: d.players.size ? Math.round((10 * d.humanSlots) / d.players.size) / 10 : 0,
+      peakOnline: d.peakOnline,
+    }));
+  }
+
   get(token) {
     return validToken(token) ? this.profiles.get(token) || null : null;
   }
@@ -144,6 +201,7 @@ export class Stats {
     if (!validToken(token)) return null;
     let p = this.profiles.get(token);
     if (!p) {
+      this.day(now).newPlayers++;
       p = { name, games: 0, wins: 0, kills: 0, best: 0, xp: 0, points: 0, created: now, last: now, day: null, week: null };
       this.profiles.set(token, p);
     }
@@ -153,6 +211,7 @@ export class Stats {
     const win = place === 1 ? 1 : 0;
     p.name = name;
     p.last = now;
+    this.day(now).players.add(token);
     const day = periodKeys(now).day;
     const missionsDone = addMatch(p, day, { place, n, kills, picks });
     const missionXp = missionsDone.reduce((s, m) => s + m.xp, 0);

@@ -464,6 +464,8 @@ export class Room {
     const stats = this.server.stats;
     if (!stats) return;
     const r = this.round;
+    const humans = r.players.filter((p) => !p.bot && p.token).length;
+    if (humans) stats.matchPlayed({ room: !!this.code, secs: Math.max(0, Math.round((r.tick - r.playTick) / TICK_RATE)), humans });
     for (const p of r.players) {
       if (p.bot || !p.token) continue;
       // Friends' rooms earn XP but don't count for the leaderboards.
