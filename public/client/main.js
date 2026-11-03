@@ -429,9 +429,9 @@ function killTag(killer, tick) {
 // Tips during the first few matches (until the player has seen them all).
 const TIPS = [
   { at: 2, text: 'Gaps open in every line now and then. You can slip through them!' },
-  { at: 12, text: 'Green power-ups help you. Red ones hit the players near you.' },
-  { at: 22, text: 'The zone is shrinking soon. Stay inside the circle!' },
-  { at: 34, text: 'Cut others off: make them crash into your line to score kills.' },
+  { at: 9, text: 'The zone is shrinking soon. Stay inside the circle!' },
+  { at: 17, text: 'Green power-ups help you. Red ones hit the players near you.' },
+  { at: 27, text: 'Cut others off: make them crash into your line to score kills.' },
 ];
 let tipsSeen = 0;
 try { tipsSeen = Number(localStorage.getItem('cr-tips')) || 0; } catch {}

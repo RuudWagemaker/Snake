@@ -32,13 +32,13 @@ export const fieldRadius = (n) => Math.round(800 + 300 * Math.sqrt(n));
 
 // Zone shrink schedule (seconds). Each phase waits `hold`, then shrinks over
 // `shrink` to `f` times the previous radius. The last phase closes completely,
-// so every match is guaranteed to end.
+// so every match is guaranteed to end: at most 100 s after the start.
 export const ZONE_PHASES = [
-  { hold: 25, shrink: 25, f: 0.6 },
-  { hold: 15, shrink: 20, f: 0.55 },
-  { hold: 12, shrink: 16, f: 0.5 },
-  { hold: 10, shrink: 14, f: 0.45 },
-  { hold: 8, shrink: 16, f: 0 },
+  { hold: 15, shrink: 15, f: 0.6 },
+  { hold: 10, shrink: 12, f: 0.55 },
+  { hold: 8, shrink: 10, f: 0.5 },
+  { hold: 6, shrink: 9, f: 0.45 },
+  { hold: 5, shrink: 10, f: 0 },
 ];
 
 export const GRID_CELL = 48;
