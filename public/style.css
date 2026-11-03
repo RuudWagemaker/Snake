@@ -73,6 +73,16 @@ button.slim { font-size: 16px; padding: 11px; font-weight: 700; }
 #lobby-room .row button.slim { white-space: normal; }
 #lobby { width: min(92vw, 360px); }
 #room-info { color: #ffd43b; margin-bottom: 8px; }
+.missions { margin: 12px 0 8px; padding: 8px 12px; border-radius: 12px; background: #0f1522; text-align: left; font-size: 13px; color: var(--muted); }
+.missions .mt { font-weight: 700; color: var(--text); margin-bottom: 2px; }
+.missions .m { display: flex; gap: 8px; align-items: baseline; line-height: 1.7; }
+.missions .m span { flex: 1; }
+.missions .m b { color: var(--text); font-variant-numeric: tabular-nums; }
+.missions .m i { font-style: normal; color: #51cf66; white-space: nowrap; }
+.missions .m.done span { text-decoration: line-through; }
+.missions .m.done b { color: #51cf66; }
+.missions .m.done i { color: var(--muted); }
+.mdone { color: #51cf66; font-weight: 700; font-size: 14px; margin: 2px 0; }
 .swatches { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; margin: 8px 0 4px; }
 .swatches button { margin: 0; padding: 0; aspect-ratio: 1; border-radius: 50%; font-size: 13px; border: 3px solid transparent; background: #263049; }
 .swatches button.on { border-color: #fff; }

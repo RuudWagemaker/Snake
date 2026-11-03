@@ -6,6 +6,7 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync, readdirSync, unlinkSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { cleanName } from './names.js';
+import { addMatch, missionList } from './missions.js';
 
 const SAVE_DELAY_MS = 10000;
 const LB_SIZE = 20;
@@ -128,17 +129,18 @@ export class Stats {
   }
 
   /** What the client shows in the menu. */
-  summary(token) {
+  summary(token, now = Date.now()) {
     const p = this.get(token);
     const s = p || { games: 0, wins: 0, kills: 0, best: 0, xp: 0 };
-    return { games: s.games, wins: s.wins, kills: s.kills, best: s.best, ...levelInfo(s.xp) };
+    return { games: s.games, wins: s.wins, kills: s.kills, best: s.best, ...levelInfo(s.xp), missions: missionList(p, periodKeys(now).day) };
   }
 
   /**
    * Record a finished match for one human. Returns what they earned, for the
-   * end screen. Unranked matches (friends' rooms) only give XP.
+   * end screen. Unranked matches (friends' rooms) only give XP (missions count too).
+   * `picks`: power-ups picked up this match, {type: count}.
    */
-  record(token, name, place, n, kills, now = Date.now(), ranked = true) {
+  record(token, name, place, n, kills, now = Date.now(), ranked = true, picks = {}) {
     if (!validToken(token)) return null;
     let p = this.profiles.get(token);
     if (!p) {
@@ -151,11 +153,15 @@ export class Stats {
     const win = place === 1 ? 1 : 0;
     p.name = name;
     p.last = now;
-    p.xp += xp;
+    const day = periodKeys(now).day;
+    const missionsDone = addMatch(p, day, { place, n, kills, picks });
+    const missionXp = missionsDone.reduce((s, m) => s + m.xp, 0);
+    p.xp += xp + missionXp;
     this.scheduleSave();
+    const extra = { missionsDone, missionXp, missions: missionList(p, day) };
     if (!ranked) {
       const info = levelInfo(p.xp);
-      return { points, xpGained: xp, ranked: false, levelUp: info.level > before, ...info };
+      return { points, xpGained: xp, ranked: false, levelUp: info.level > before, ...info, ...extra };
     }
     p.games++;
     p.wins += win;
@@ -170,7 +176,7 @@ export class Stats {
     }
     this.lbCache.clear();
     const info = levelInfo(p.xp);
-    return { points, xpGained: xp, ranked: true, levelUp: info.level > before, ...info };
+    return { points, xpGained: xp, ranked: true, levelUp: info.level > before, ...info, ...extra };
   }
 
   /** Points etc. of a profile for one period (null if nothing this period). */

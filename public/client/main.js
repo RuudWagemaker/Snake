@@ -110,6 +110,16 @@ function xpBar(p) {
 }
 
 let myLevel = 1, lastProfile = null;
+function showMissions(list) {
+  const el = $('missions');
+  show(el, !!(list && list.length));
+  if (!list || !list.length) return;
+  el.innerHTML = '<div class="mt">Daily missions</div>' + list.map((m) => {
+    const done = m.have >= m.goal;
+    const prog = done ? '\u2713' : m.goal > 1 ? `${m.have}/${m.goal}` : '';
+    return `<div class="m${done ? ' done' : ''}"><span>${esc(m.text)}</span><b>${prog}</b><i>+${m.xp} XP</i></div>`;
+  }).join('');
+}
 function showProfile(p) {
   lastProfile = p;
   myLevel = p.level;
@@ -122,6 +132,7 @@ function showProfile(p) {
       `${p.games} game${p.games === 1 ? '' : 's'} · ${p.wins} win${p.wins === 1 ? '' : 's'} · ${p.kills} kill${p.kills === 1 ? '' : 's'} · best #${p.best}` +
       (roomCode ? '<div class="small">Rooms give XP, not leaderboard points.</div>' : '');
   }
+  showMissions(p.missions);
   show(ui.me);
   if (mode === 'menu') ui.status.textContent = p.online > 1 ? `${p.online} players online` : '';
 }
@@ -159,6 +170,7 @@ function showResult(m) {
   ui.result.innerHTML = (m.ranked
     ? `<div class="pts">+${m.points} point${m.points === 1 ? '' : 's'} · +${m.xpGained} XP</div>`
     : `<div class="pts">+${m.xpGained} XP</div><div class="small">Friends' rooms don't count for the leaderboard</div>`) +
+    (m.missionsDone || []).map((d) => `<div class="mdone">\u2713 ${esc(d.text)} · +${d.xp} XP</div>`).join('') +
     (m.levelUp ? `<div class="up">\u2B06 Level ${m.level}!</div>` : `<div>Level ${m.level} · ${m.into} / ${m.need} XP</div>`) +
     xpBar(m);
 }

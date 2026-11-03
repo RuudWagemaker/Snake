@@ -199,6 +199,7 @@ export class Room {
         solid: true,
         turn: 0,
         kills: 0,
+        picks: {},              // power-ups picked up, for daily missions
         place: 0,
         deathTick: -1,
         gaps: new GapSchedule(seed, id),
@@ -395,6 +396,7 @@ export class Room {
         Math.hypot(q.x - it.x, q.y - it.y) < ITEM_RADIUS + q.width / 2);
       if (!p) continue;
       r.items.splice(i, 1);
+      p.picks[it.type] = (p.picks[it.type] || 0) + 1;
       const def = POWERUPS[it.type];
       const targets = def.good
         ? [p.id]
@@ -465,7 +467,7 @@ export class Room {
     for (const p of r.players) {
       if (p.bot || !p.token) continue;
       // Friends' rooms earn XP but don't count for the leaderboards.
-      const res = stats.record(p.token, p.name, p.place, r.n, p.kills, Date.now(), !this.code);
+      const res = stats.record(p.token, p.name, p.place, r.n, p.kills, Date.now(), !this.code, p.picks);
       if (res && p.client && p.client.room === this) p.client.send({ t: 'result', place: p.place, n: r.n, kills: p.kills, ...res });
     }
   }
