@@ -154,7 +154,7 @@ test('static files are served and paths cannot escape public/', async () => {
   try {
     const ok = await fetch(`http://localhost:${srv.port}/`);
     assert.equal(ok.status, 200);
-    assert.match(await ok.text(), /Curve/);
+    assert.match(await ok.text(), /Line Clash/);
     const js = await fetch(`http://localhost:${srv.port}/shared/sim.js`);
     assert.equal(js.status, 200);
     const bad = await fetch(`http://localhost:${srv.port}/%2e%2e/package.json`);

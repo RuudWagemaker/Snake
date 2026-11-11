@@ -1,4 +1,4 @@
-# Curve Royale
+# Line Clash
 
 **Curve Fever + slither.io + battle royale**, in the browser.
 

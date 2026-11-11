@@ -317,7 +317,7 @@ function showRoomInfo() {
 async function share(text, url, msgEl) {
   const say = (s) => { msgEl.textContent = s; show(msgEl); };
   if (navigator.share) {
-    try { await navigator.share({ title: 'Curve Royale', text, url }); return; } catch (e) { if (e.name === 'AbortError') return; }
+    try { await navigator.share({ title: 'Line Clash', text, url }); return; } catch (e) { if (e.name === 'AbortError') return; }
   }
   try {
     await navigator.clipboard.writeText(`${text} ${url}`);
@@ -328,7 +328,7 @@ async function share(text, url, msgEl) {
 }
 
 function invite(msgEl) {
-  share('Come play Curve Royale with me!', roomLink(), msgEl);
+  share('Come play Line Clash with me!', roomLink(), msgEl);
 }
 
 $('friends').addEventListener('click', () => {
@@ -343,9 +343,9 @@ $('go').addEventListener('click', () => net.send({ t: 'go' }));
 $('share').addEventListener('click', () => {
   const r = lastResult;
   const text = r
-    ? (r.place === 1 ? `I won a round of Curve Royale against ${r.n - 1} others with ${r.kills} kill${r.kills === 1 ? '' : 's'}! Can you beat me?`
-      : `I came #${r.place} of ${r.n} in Curve Royale with ${r.kills} kill${r.kills === 1 ? '' : 's'}. Can you beat me?`)
-    : 'Play Curve Royale with me!';
+    ? (r.place === 1 ? `I won a round of Line Clash against ${r.n - 1} others with ${r.kills} kill${r.kills === 1 ? '' : 's'}! Can you beat me?`
+      : `I came #${r.place} of ${r.n} in Line Clash with ${r.kills} kill${r.kills === 1 ? '' : 's'}. Can you beat me?`)
+    : 'Play Line Clash with me!';
   share(text, roomLink(), ui.shareMsg);
 });
 showRoomInfo();

@@ -58,14 +58,14 @@ export function adminPage(stats, game) {
     `<tr><td colspan="${cols.length}">No data yet</td></tr>`;
   const online = game ? game.clients.size : 0;
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex"><title>Curve Royale stats</title><style>
+<meta name="robots" content="noindex"><title>Line Clash stats</title><style>
 body{font:15px system-ui,sans-serif;background:#0b0f17;color:#e8ecf4;margin:16px}
 h1{font-size:22px;margin:0 0 4px}p{color:#8a94a8;margin:0 0 14px}
 .wrap{overflow-x:auto}table{border-collapse:collapse;white-space:nowrap}
 th,td{padding:6px 10px;text-align:right;border-bottom:1px solid #263049}th{color:#8a94a8;font-weight:600}
 td:first-child,th:first-child{text-align:left;position:sticky;left:0;background:#0b0f17}
 b{color:#51cf66}</style></head><body>
-<h1>Curve Royale</h1><p>Online now: <b>${online}</b> · profiles: <b>${stats.profiles.size}</b> · build ${escHtml(BUILD)}</p>
+<h1>Line Clash</h1><p>Online now: <b>${online}</b> · profiles: <b>${stats.profiles.size}</b> · build ${escHtml(BUILD)}</p>
 <div class="wrap"><table><tr>${head}</tr>${body}</table></div>
 <p style="margin-top:14px">Visitors = opened the game. Played = finished at least one match. New = first match ever. Days run in Amsterdam time.</p>
 </body></html>`;
@@ -151,7 +151,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     // CANONICAL_HOST: the game's main address (e.g. lineclash.com). Pages opened on any
     // other address move there, taking the player's saved progress along.
     canonicalHost: process.env.CANONICAL_HOST || null }).then(({ port, game }) => {
-    console.log(`Curve Royale (build ${BUILD}) running on http://localhost:${port}` +
+    console.log(`Line Clash (build ${BUILD}) running on http://localhost:${port}` +
       (statsFile ? `, stats in ${statsFile}` : ', stats in memory only (set STATS_FILE to keep them)'));
     // Save the stats before a restart (docker stop sends SIGTERM).
     for (const sig of ['SIGTERM', 'SIGINT']) process.once(sig, () => { game.stats.saveNow(); process.exit(0); });

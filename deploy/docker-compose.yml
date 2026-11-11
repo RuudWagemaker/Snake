@@ -1,4 +1,4 @@
-# Curve Royale on a VPS: the game server plus Caddy for HTTPS.
+# Line Clash on a VPS: the game server plus Caddy for HTTPS.
 # Host networking so WebRTC can use the server's real IP and UDP port directly.
 services:
   game:

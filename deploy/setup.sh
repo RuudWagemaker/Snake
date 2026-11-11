@@ -48,5 +48,5 @@ chmod +x deploy/update.sh
 echo "*/5 * * * * root $REPO_DIR/deploy/update.sh >> /var/log/curve-royale-update.log 2>&1" > /etc/cron.d/curve-royale
 
 echo
-echo "Curve Royale is starting at: https://$DOMAIN"
+echo "Line Clash is starting at: https://$DOMAIN"
 echo "(the HTTPS certificate can take a minute on the first visit)"
