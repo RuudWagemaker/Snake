@@ -10,6 +10,37 @@
   <meta name="build" content="%BUILD%">
   <meta name="description" content="Curve Royale: steer your line, cut off your rivals and be the last snake standing while the zone closes in.">
   <title>Curve Royale</title>
+  <script>
+    // Moving to the main address: localStorage belongs to one address, so carry
+    // the player's saved data (profile token, name, style...) along in the #hash.
+    (function () {
+      var main = '%CANONICAL%';
+      if (!main || main.indexOf('%') >= 0) return;
+      try {
+        var h = location.hostname;
+        if (h !== main && h !== 'localhost' && h !== '127.0.0.1') {
+          var data = {};
+          for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            if (k.indexOf('cr-') === 0) data[k] = localStorage.getItem(k);
+          }
+          location.replace('https://' + main + location.pathname + location.search + '#move=' + encodeURIComponent(JSON.stringify(data)));
+          return;
+        }
+        if (location.hash.indexOf('#move=') === 0) {
+          var got = JSON.parse(decodeURIComponent(location.hash.slice(6)));
+          // Fill in only what this address doesn't have yet (the first move brings
+          // everything; later visits to an old link never overwrite newer progress).
+          var fresh = localStorage.getItem('cr-token') === null;
+          for (var key in got) {
+            if (key.indexOf('cr-') !== 0 || typeof got[key] !== 'string') continue;
+            if (fresh ? localStorage.getItem(key) === null : key !== 'cr-token' && key !== 'cr-account' && key !== 'cr-guest' && localStorage.getItem(key) === null) localStorage.setItem(key, got[key]);
+          }
+          history.replaceState(null, '', location.pathname + location.search);
+        }
+      } catch (e) {}
+    })();
+  </script>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
