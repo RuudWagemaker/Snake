@@ -6,14 +6,23 @@ const KEYS = {
   ArrowLeft: -1, KeyA: -1, KeyQ: -1, Comma: -1,
   ArrowRight: 1, KeyD: 1, KeyE: 1, Period: 1,
 };
+const FIRE_KEYS = new Set(['Space', 'ArrowUp', 'KeyW']);
+const FIRE_BUTTONS = [0, 1, 2, 3, 12]; // gamepad A/B/X/Y and d-pad up
 
 export class Input {
   constructor(surface) {
     this.stack = [];      // [{src, dir}]
     this.padTurn = 0;
     this.enabled = true;  // pointer steering only while playing
+    this.onFire = null;   // rocket: Space / up / W, or a gamepad face button
+    this.padFireWas = false;
 
     addEventListener('keydown', (e) => {
+      if (FIRE_KEYS.has(e.code) && this.enabled && !(e.target instanceof HTMLInputElement)) {
+        e.preventDefault();
+        if (!e.repeat && this.onFire) this.onFire();
+        return;
+      }
       const dir = KEYS[e.code];
       if (dir === undefined || e.target instanceof HTMLInputElement) return;
       e.preventDefault();
@@ -65,6 +74,12 @@ export class Input {
   pollGamepads() {
     this.padTurn = 0;
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    let fire = false;
+    for (const gp of pads) {
+      if (gp && FIRE_BUTTONS.some((i) => gp.buttons[i] && gp.buttons[i].pressed)) fire = true;
+    }
+    if (fire && !this.padFireWas && this.enabled && this.onFire) this.onFire();
+    this.padFireWas = fire;
     for (const gp of pads) {
       if (!gp) continue;
       const b = (i) => gp.buttons[i] && gp.buttons[i].pressed;

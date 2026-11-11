@@ -115,3 +115,21 @@ test('rng is deterministic', () => {
   const a = mulberry32(9), b = mulberry32(9);
   for (let i = 0; i < 10; i++) assert.equal(a(), b());
 });
+
+test('rocket holes: lines are gone from the blast tick on, later lines stay solid', () => {
+  const g = new SegGrid();
+  // a wall along x = 100, drawn at ticks 1..40
+  for (let i = 0; i < 40; i++) g.add(100, i * 5 - 100, 100, i * 5 - 95, 7, i + 1);
+  const zone = { x: 0, y: 0, r: 1000 };
+  assert.equal(checkHit(g, zone, 100, 0, 1, 100), 7);
+  g.blast(100, 0, 30, 50);
+  assert.equal(checkHit(g, zone, 100, 0, 1, 49), 7, 'still there before the blast tick');
+  assert.equal(checkHit(g, zone, 100, 0, 1, 50), null, 'gone from the blast tick on');
+  assert.equal(checkHit(g, zone, 100, 40, 1, 50), 7, 'outside the hole stays');
+  g.add(90, 0, 110, 0, 8, 45);   // drawn before the blast tick, inside: cut too
+  assert.equal(checkHit(g, zone, 105, 0, 1, 50), null);
+  g.add(80, 10, 120, 10, 9, 60); // drawn after the blast: solid
+  assert.equal(checkHit(g, zone, 100, 10, 1, 61), 9);
+  g.pruneBlasts(70);
+  assert.equal(g.blasts.length, 0);
+});

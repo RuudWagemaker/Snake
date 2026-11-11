@@ -14,6 +14,9 @@ export const POOL = [
   { id: 'play5', group: 'play', text: 'Play 5 matches', goal: 5, xp: 25, count: () => 1 },
   { id: 'outlast25', group: 'outlast', text: 'Outlast 25 players', goal: 25, xp: 20, count: (m) => Math.max(0, m.n - m.place) },
   { id: 'power3', group: 'power', text: 'Pick up 3 power-ups', goal: 3, xp: 15, count: (m) => sum(m.picks) },
+  { id: 'fuel6', group: 'power', text: 'Collect 6 fuel cans', goal: 6, xp: 15, count: (m) => (m.picks && m.picks.fuel) || 0 },
+  { id: 'blast1', group: 'rocket', text: 'Blast a line with a rocket', goal: 1, xp: 20, count: (m) => (m.picks && m.picks.blast) || 0 },
+  { id: 'blast3', group: 'rocket', text: 'Blast 3 lines with rockets', goal: 3, xp: 30, count: (m) => (m.picks && m.picks.blast) || 0 },
   { id: 'shield', group: 'power', text: 'Pick up a Shield', goal: 1, xp: 15, count: (m) => (m.picks && m.picks.shield) || 0 },
   { id: 'slow', group: 'power', text: 'Pick up a Slow for your rivals', goal: 1, xp: 15, count: (m) => (m.picks && m.picks.slow) || 0 },
 ];
@@ -22,7 +25,7 @@ export const DAILY = 3;
 
 function sum(o) {
   let s = 0;
-  for (const v of Object.values(o || {})) s += v;
+  for (const [k, v] of Object.entries(o || {})) if (k !== 'fuel' && k !== 'blast') s += v; // power-ups only
   return s;
 }
 

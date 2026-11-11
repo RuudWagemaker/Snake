@@ -23,6 +23,7 @@ async function main() {
   const statsDir = mkdtempSync(path.join(tmpdir(), 'cr-ui-'));
   process.env.STATS_FILE = path.join(statsDir, 'stats.json');
   process.env.SIM_ITEMS = process.env.SIM_ITEMS || '40'; // plenty of power-ups to look at
+  process.env.SIM_FUEL = process.env.SIM_FUEL || '6';    // start with 2 rockets, to try them
   const { startServer } = await import(path.resolve(__dirname, '../server/index.js'));
   const srv = await startServer({ port: 0, statsFile: process.env.STATS_FILE });
   const url = `http://localhost:${srv.port}/`;
@@ -94,6 +95,17 @@ async function main() {
     await shot(p, '05-phone-game');
     const hud = await p.textContent('#alive');
     if (!/alive/.test(hud)) problems.push(`game: HUD shows "${hud}"`);
+    // rocket: the phone has a fire button; 2 rockets at the start (SIM_FUEL)
+    if (!(await visible(p, '#fire'))) problems.push('game: no rocket button on the phone');
+    else {
+      const before = await p.textContent('#fuel');
+      await p.tap('#fire').catch(() => {});
+      await p.waitForTimeout(350);
+      await shot(p, '05b-phone-rocket');
+      await p.waitForTimeout(700);
+      const after = await p.textContent('#fuel');
+      if (!/2/.test(before) || !/1/.test(after)) problems.push(`rocket: fuel didn't go down ("${before}" -> "${after}")`);
+    }
 
     if (!QUICK) {
       // Hold right so we spiral and crash, then wait for the round to end.
@@ -145,6 +157,9 @@ async function main() {
     await p.waitForSelector('#hud:not([hidden])', { timeout: 10000 });
     await d.waitForTimeout(4500);
     await shot(d, '12-desktop-game');
+    await d.keyboard.press('Space');
+    await d.waitForTimeout(300);
+    await shot(d, '13-desktop-rocket');
   } catch (err) {
     problems.push(`script stopped: ${err.message.split('\n')[0]}`);
   } finally {

@@ -17,9 +17,9 @@
 //    glide in. While spectating they're shown slightly in the past and
 //    interpolated (smoothest). Either way, if updates stop for a moment they
 //    keep moving instead of freezing.
-import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, ITEM_RADIUS, POWERUPS } from '../shared/constants.js';
-import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt } from '../shared/sim.js';
-import { FLAG_GAP, FLAG_DIED, encodeInput, encodeInputs } from '../shared/protocol.js';
+import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, ITEM_RADIUS, POWERUPS, FUEL, FUEL_PER_ROCKET, MAX_FUEL, EFFECT_DELAY } from '../shared/constants.js';
+import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt, distSqPointSeg } from '../shared/sim.js';
+import { FLAG_GAP, FLAG_DIED, FLAG_CUT, encodeInput, encodeInputs } from '../shared/protocol.js';
 
 const MIN_INTERP = 2;       // remote snakes are shown at least this many ticks in the past
 const MAX_INTERP = 6;       // bigger gaps are bridged by extrapolation instead
@@ -59,6 +59,7 @@ export class Snake {
     this.killer = null;
     this.place = 0;
     this.kills = 0;
+    this.fuel = info.fuel || 0; // fuel cans (FUEL_PER_ROCKET make a rocket)
     this.chunks = [];      // cached Path2D pieces, owned by the renderer
     this.burstAt = 0;      // when the death effect started (ms)
     this.vox = 0;          // visual offset after extrapolation was corrected (glides to 0)
@@ -95,10 +96,14 @@ export class Snake {
     if (!this.prov[i]) return false;
     this.xs[i] = x; this.ys[i] = y; this.as[i] = a; this.fl[i] = f; this.prov[i] = 0;
     this.ws[i] = Math.round(w * 10);
-    // cached trail pieces containing this point must be rebuilt
+    this.dirty(i);
+    return true;
+  }
+
+  /** Cached trail pieces containing point i must be rebuilt. */
+  dirty(i) {
     delete this.chunks[Math.floor(i / CHUNK)];
     if (i % CHUNK === 0 && i > 0) delete this.chunks[i / CHUNK - 1];
-    return true;
   }
 
   /** Interpolated head at fractional tick (clamped to known data). */
@@ -147,6 +152,9 @@ export class ClientGame {
     this.items = new Map((msg.items || []).map((it) => [it.id, it]));
     this.effects = [];        // power-up effects {type, start, end, targets}
     this.popups = [];         // floating pickup texts {x, y, text, good, at}
+    this.rockets = new Map(); // id -> {by, x, y, a, tick, end: {x, y, tick} | null}
+    this.holes = [];          // rocket holes {x, y, r, at, shown}: drawn once the server reaches `at`
+    this.lastFireAt = 0;
     this.tmpMods = {};
 
     // prediction state
@@ -264,11 +272,13 @@ export class ClientGame {
         else this.reconcile(mine, d.tick);
       }
     }
+    if (this.holes.length) this.applyHoles();
     return true;
   }
 
   addSegment(s, tick) {
     const i = s.n - 1;
+    this.cutPoint(s, i, tick);
     if (tick > this.playTick && i > 0 && !(s.fl[i] & FLAG_GAP) && !(s.fl[i - 1] & FLAG_GAP)) {
       this.grid.add(s.xs[i - 1], s.ys[i - 1], s.xs[i], s.ys[i], s.id, tick, s.width(i));
     }
@@ -285,6 +295,7 @@ export class ClientGame {
         s.append(d.tick, e.x, e.y, e.a, e.flags, 0, e.width || LINE_WIDTH);
       } else if (i >= 0 && i < s.n && s.fill(i, e.x, e.y, e.a, e.flags, e.width || LINE_WIDTH)) {
         this.stats.filled++;
+        this.cutPoint(s, i, d.tick);
       }
       if (e.flags & FLAG_DIED) {
         s.alive = false;
@@ -343,6 +354,68 @@ export class ClientGame {
     this.onEvent({ type: 'death', snake: s, killer: k || null, killerId: m.killer, msg: m });
   }
 
+  // ---- rockets -----------------------------------------------------------
+
+  /** Press fire. Returns true if a rocket is on its way. */
+  fire() {
+    const now = performance.now();
+    if (!this.controlling || !this.me || this.me.fuel < FUEL_PER_ROCKET || now - this.lastFireAt < 300) return false;
+    if (this.lastTarget === null || this.lastTarget <= this.playTick) return false; // countdown
+    this.lastFireAt = now;
+    // Stamped with the tick we're showing our snake at, so it leaves from there.
+    this.net.send({ t: 'fire', tick: this.lastTarget });
+    return true;
+  }
+
+  onRocket(m) {
+    const s = this.snakes.get(m.by);
+    if (s) s.fuel = m.fuel;
+    this.rockets.set(m.id, { by: m.by, x: m.x, y: m.y, a: m.a, tick: m.tick, end: null });
+    this.onEvent({ type: 'rocket', msg: m, by: s });
+  }
+
+  onBlast(m) {
+    const rk = this.rockets.get(m.id);
+    if (rk) rk.end = { x: m.x, y: m.y, tick: m.at - EFFECT_DELAY };
+    if (m.r > 0) {
+      this.grid.blast(m.x, m.y, m.r, m.at); // collisions: gone from tick `at` on, like on the server
+      this.holes.push({ x: m.x, y: m.y, r: m.r, at: m.at, by: m.by, shown: false });
+      this.applyHoles(); // snake data (UDP) may already be past `at`
+    }
+  }
+
+  /** Once the server has reached a hole's tick, cut it out of the drawn trails too. */
+  applyHoles() {
+    for (const h of this.holes) {
+      if (h.shown || this.latestTick < h.at) continue;
+      h.shown = true;
+      h.shownAt = performance.now();
+      for (const s of this.list) {
+        const last = Math.min(s.n - 1, h.at - s.firstTick);
+        for (let i = 1; i <= last; i++) this.cutOne(s, i, h);
+      }
+      this.onEvent({ type: 'hole', hole: h });
+    }
+    // forget old ones (rockets after their flight, holes once nothing new can be cut)
+    if (this.holes.length > 8) this.holes = this.holes.filter((h) => !h.shown || h.at > this.latestTick - 60);
+    for (const [id, rk] of this.rockets) if (rk.end && rk.end.tick < this.latestTick - 60) this.rockets.delete(id);
+    this.grid.pruneBlasts(this.latestTick - 60);
+  }
+
+  /** A point that arrives (or is corrected) after a hole was cut. */
+  cutPoint(s, i, tick) {
+    if (!this.holes.length || i < 1) return;
+    for (const h of this.holes) if (h.shown && tick <= h.at) this.cutOne(s, i, h);
+  }
+
+  cutOne(s, i, h) {
+    if (s.fl[i] & FLAG_CUT) return;
+    if (distSqPointSeg(h.x, h.y, s.xs[i - 1], s.ys[i - 1], s.xs[i], s.ys[i]) < h.r * h.r) {
+      s.fl[i] |= FLAG_CUT;
+      s.dirty(i);
+    }
+  }
+
   onItems(m) {
     for (const id of m.rem || []) this.items.delete(id);
     for (const it of m.add || []) this.items.set(it.id, it);
@@ -352,9 +425,10 @@ export class ClientGame {
     this.items.delete(m.item);
     if (m.targets.length) this.effects.push({ type: m.type, start: m.start, end: m.end, targets: m.targets });
     this.effects = this.effects.filter((e) => e.end > this.latestTick - 30);
-    const def = POWERUPS[m.type];
+    const def = m.type === 'fuel' ? FUEL : POWERUPS[m.type];
     const by = this.snakes.get(m.by);
-    this.popups.push({ x: m.x, y: m.y, text: (def.good ? '+' : '') + def.label.toUpperCase(), good: def.good, at: performance.now() });
+    if (m.type === 'fuel' && by) by.fuel = m.fuel;
+    this.popups.push({ x: m.x, y: m.y, text: (def.good ? '+' : '') + def.label.toUpperCase(), good: def.good, fuel: m.type === 'fuel', at: performance.now() });
     this.onEvent({ type: 'pickup', msg: m, def, by, hitsMe: m.targets.includes(this.myId) });
   }
 
@@ -458,6 +532,7 @@ export class ClientGame {
         }
         // Hide a power-up we're about to collect (the server confirms it shortly).
         for (const it of this.items.values()) {
+          if (it.type === 'fuel' && this.me.fuel >= MAX_FUEL) continue; // full: the server leaves it
           if (Math.hypot(it.x - p.x, it.y - p.y) < ITEM_RADIUS + m.width / 2) it.localPick = performance.now();
         }
       }

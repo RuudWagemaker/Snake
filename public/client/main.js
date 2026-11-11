@@ -1,4 +1,4 @@
-import { TICK_MS, TICK_RATE, KILLER_ZONE, KILLER_LEFT, COLORS, TRAIL_STYLES, colorLevel } from '../shared/constants.js';
+import { TICK_MS, TICK_RATE, KILLER_ZONE, KILLER_LEFT, COLORS, TRAIL_STYLES, colorLevel, FUEL_PER_ROCKET, MAX_FUEL } from '../shared/constants.js';
 import { decodeTick } from '../shared/protocol.js';
 import { Net } from './net.js';
 import { Input } from './input.js';
@@ -38,6 +38,17 @@ function reloadForNewVersion() {
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const net = new Net();
 const input = new Input(canvas);
+const fireBtn = document.getElementById('fire');
+function fireRocket() {
+  if (mode !== 'game' || !game.active) return;
+  if (game.fire()) {
+    fireBtn.classList.add('bang');
+    setTimeout(() => fireBtn.classList.remove('bang'), 120);
+  }
+}
+input.onFire = fireRocket;
+fireBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); fireRocket(); });
+fireBtn.addEventListener('contextmenu', (e) => e.preventDefault());
 const game = new ClientGame(net);
 const renderer = new Renderer(canvas, $('minimap'));
 
@@ -432,14 +443,17 @@ const TIPS = [
   { at: 9, text: 'The zone is shrinking soon. Stay inside the circle!' },
   { at: 17, text: 'Green power-ups help you. Red ones hit the players near you.' },
   { at: 27, text: 'Cut others off: make them crash into your line to score kills.' },
+  // `first`: when it's the first tip of a match (players who saw the others already)
+  { at: 40, first: 6, text: isTouch ? 'Collect \u26FD fuel: 3 cans = 1 rocket. Tap \u{1F680} to blast a hole in a line!' : 'Collect \u26FD fuel: 3 cans = 1 rocket. Press Space to blast a hole in a line!' },
 ];
 let tipsSeen = 0;
 try { tipsSeen = Number(localStorage.getItem('cr-tips')) || 0; } catch {}
-let tipUntil = 0;
+let tipUntil = 0, tipsThisMatch = 0;
 function updateTip(serverTick, now) {
   if (tipsSeen < TIPS.length && game.controlling) {
     const t = TIPS[tipsSeen];
-    if ((serverTick - game.playTick) / TICK_RATE >= t.at) {
+    if ((serverTick - game.playTick) / TICK_RATE >= (tipsThisMatch === 0 && t.first ? t.first : t.at)) {
+      tipsThisMatch++;
       ui.tip.textContent = t.text;
       show(ui.tip);
       tipUntil = now + 5000;
@@ -461,6 +475,16 @@ game.onEvent = (ev) => {
       ui.center.innerHTML = `<span style="color:#ff6b81;font-size:0.6em">${ev.def.icon} ${ev.def.label.toUpperCase()}!</span><small>from ${esc(ev.by ? ev.by.name : '?')}</small>`;
       flashUntil = performance.now() + 1300;
     }
+    return;
+  }
+  if (ev.type === 'rocket') {
+    if (ev.by === game.me) sound.play('launch');
+    return;
+  }
+  if (ev.type === 'hole') {
+    const h = ev.hole, me = game.me;
+    const near = me && Math.hypot(me.xs[me.n - 1] - h.x, me.ys[me.n - 1] - h.y) < 700;
+    if (near || h.by === game.myId) sound.play('boom');
     return;
   }
   if (ev.type !== 'death') return;
@@ -560,6 +584,7 @@ net.onJson = (m) => {
       streaks = new Map();
       firstBlood = false;
       show(ui.tip, false);
+      tipsThisMatch = 0;
       ui.result.innerHTML = '';
       lastResult = null;
       show(ui.shareMsg, false);
@@ -589,6 +614,12 @@ net.onJson = (m) => {
       break;
     case 'pickup':
       if (game.active) game.onPickup(m);
+      break;
+    case 'rocket':
+      if (game.active) game.onRocket(m);
+      break;
+    case 'blast':
+      if (game.active) game.onBlast(m);
       break;
     case 'end':
       if (!game.active) return;
@@ -721,6 +752,26 @@ function frame(now) {
   }
 }
 
+let fuelShown = '';
+function showFuel() {
+  const fuel = game.me && game.controlling ? game.me.fuel : -1;
+  const key = `${fuel}`;
+  if (key === fuelShown) return;
+  fuelShown = key;
+  const el = $('fuel');
+  show(el, fuel >= 0);
+  show(fireBtn, fuel >= 0 && isTouch);
+  if (fuel < 0) return;
+  const rockets = Math.floor(fuel / FUEL_PER_ROCKET), cans = fuel % FUEL_PER_ROCKET;
+  const full = fuel >= MAX_FUEL;
+  const bar = full ? '' : ` <span class="can">${'\u25AE'.repeat(cans)}<s>${'\u25AE'.repeat(FUEL_PER_ROCKET - cans)}</s></span>`;
+  el.innerHTML = `<span class="${rockets ? 'ok' : ''}">\u{1F680} ${rockets}</span>${bar}`;
+  el.title = 'Fuel: 3 cans make a rocket';
+  fireBtn.classList.toggle('ready', rockets > 0);
+  $('fire-n').textContent = rockets > 1 ? `\u00D7${rockets}` : '';
+  $('fire-fuel').style.height = `${Math.round((100 * cans) / FUEL_PER_ROCKET)}%`;
+}
+
 function updateHud(zone, serverTick) {
   const fx = game.controlling ? game.myEffects(performance.now()) : [];
   ui.effects.innerHTML = fx.map((e) =>
@@ -732,6 +783,7 @@ function updateHud(zone, serverTick) {
   const col = ms > 150 ? '#ff6b6b' : ms > 80 ? '#ffd43b' : '#69db7c';
   const rtt = ms ? ` · <span style="color:${col}">${ms} ms</span>` : '';
   ui.kills.innerHTML = `⚔ ${k} kill${k === 1 ? '' : 's'}${rtt}`;
+  showFuel();
   let txt = '', warn = false;
   if (serverTick < game.playTick) txt = 'Get ready';
   else if (game.ended) txt = 'Round over';

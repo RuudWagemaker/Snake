@@ -91,6 +91,7 @@ SIM_STALL_MS=150 npm start
 SIM_SPIKE_MS=550 SIM_SPIKE_EVERY_MS=15000 npm start   # connection goes silent now and then
 SIM_TCP_RTO=1 SIM_SPIKE_MS=300 npm start            # ...with TCP's re-send backoff
 SIM_ITEMS=100 npm start                             # lots of power-ups (testing)
+SIM_FUEL=6 npm start                               # everyone starts with 2 rockets (testing)
 RTC_PORT=40000 SIM_UDP_LOSS=0.05 npm start          # WebRTC on, 5% UDP packet loss
 ```
 

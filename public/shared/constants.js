@@ -57,6 +57,21 @@ export const POWERUPS = {
   slow:    { good: false, secs: 4,   label: 'Slow',    icon: '\u{1F40C}' },
 };
 export const POWERUP_TYPES = Object.keys(POWERUPS);
+
+// Rockets: collect fuel cans on the field; FUEL_PER_ROCKET cans make one rocket.
+// A rocket flies straight ahead and blasts a hole (radius BLAST_R) in the first
+// line it hits. The hole opens EFFECT_DELAY ticks after the hit, so every
+// client knows about it in time (same trick as the power-ups).
+export const FUEL = { good: true, label: 'Fuel', icon: '\u26FD' };
+export const FUEL_SHARE = 0.4;            // share of field items that are fuel
+export const FUEL_PER_ROCKET = 3;
+export const MAX_FUEL = 6;                // = 2 rockets
+export const ROCKET_SPEED = 600;          // world units per second
+export const ROCKET_RANGE = 900;          // flies this far, then fizzles
+export const ROCKET_WIDTH = 4;            // for hitting lines
+export const BLAST_R = 30;
+export const FIRE_LATE_TICKS = 12;        // a fire stamped this far in the past still starts there
+export const FIRE_AHEAD_TICKS = 60;       // ...and at most this far in the future
 export const EFFECT_DELAY = 8;            // ticks between pickup and effect
 export const ITEM_RADIUS = 13;
 export const OTHERS_RANGE = 900;          // red effects hit opponents within this distance

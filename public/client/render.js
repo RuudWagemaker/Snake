@@ -1,9 +1,9 @@
-import { LINE_WIDTH, MAX_WIDTH, ITEM_RADIUS, POWERUPS } from '../shared/constants.js';
-import { FLAG_GAP } from '../shared/protocol.js';
+import { LINE_WIDTH, MAX_WIDTH, ITEM_RADIUS, POWERUPS, FUEL, ROCKET_SPEED, TICK_RATE } from '../shared/constants.js';
+import { FLAG_GAP, FLAG_CUT } from '../shared/protocol.js';
 import { CHUNK } from './game.js';
 
 const TAU = Math.PI * 2;
-const GOOD = '#2ecc71', BAD = '#ff4d6d';
+const GOOD = '#2ecc71', BAD = '#ff4d6d', FUEL_COL = '#ff922b';
 
 /** Collects line segments into one Path2D per line width (power-ups change width). */
 class Runs {
@@ -29,7 +29,7 @@ function buildChunk(s, i0, i1) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (let i = i0; i <= i1; i++) {
     const x = s.xs[i], y = s.ys[i];
-    if (i > i0 && !(s.fl[i] & FLAG_GAP) && !(s.fl[i - 1] & FLAG_GAP)) runs.seg(s.xs[i - 1], s.ys[i - 1], x, y, s.width(i));
+    if (i > i0 && !(s.fl[i] & (FLAG_GAP | FLAG_CUT)) && !(s.fl[i - 1] & FLAG_GAP)) runs.seg(s.xs[i - 1], s.ys[i - 1], x, y, s.width(i));
     if (x < x0) x0 = x; if (x > x1) x1 = x;
     if (y < y0) y0 = y; if (y > y1) y1 = y;
   }
@@ -145,6 +145,7 @@ export class Renderer {
       }
     }
     this.drawItems(game, v, f.now);
+    this.drawRockets(game, v, f.now, rt);
 
     // Outside the zone
     ctx.beginPath();
@@ -313,7 +314,7 @@ export class Renderer {
         x += glide.vox * w; y += glide.voy * w;
       }
       prevW = sn.width(i);
-      if (i > i0 && solid && prevSolid) runs.seg(px, py, x, y, prevW);
+      if (i > i0 && solid && prevSolid && !(sn.fl[i] & FLAG_CUT)) runs.seg(px, py, x, y, prevW);
       px = x; py = y; prevSolid = solid;
     }
     if (extra) {
@@ -334,8 +335,9 @@ export class Renderer {
     for (const it of game.items.values()) {
       if (it.x < v.x0 - 30 || it.x > v.x1 + 30 || it.y < v.y0 - 30 || it.y > v.y1 + 30) continue;
       if (it.localPick && now - it.localPick < 800) continue; // we're picking it up
-      const def = POWERUPS[it.type];
-      const col = def.good ? GOOD : BAD;
+      const fuel = it.type === 'fuel';
+      const def = fuel ? FUEL : POWERUPS[it.type];
+      const col = fuel ? FUEL_COL : def.good ? GOOD : BAD;
       ctx.globalAlpha = 0.25;
       ctx.fillStyle = col;
       ctx.beginPath(); ctx.arc(it.x, it.y, ITEM_RADIUS * 1.6 * pulse, 0, TAU); ctx.fill();
@@ -355,11 +357,56 @@ export class Renderer {
       ctx.lineWidth = 4;
       ctx.strokeStyle = 'rgba(6,8,13,0.8)';
       ctx.strokeText(p.text, p.x, p.y - 20 - k * 30);
-      ctx.fillStyle = p.good ? GOOD : BAD;
+      ctx.fillStyle = p.fuel ? FUEL_COL : p.good ? GOOD : BAD;
       ctx.fillText(p.text, p.x, p.y - 20 - k * 30);
     }
     ctx.globalAlpha = 1;
     ctx.textBaseline = 'alphabetic';
+  }
+
+  /** Flying rockets (straight line at ROCKET_SPEED from launch) and blast flashes. */
+  drawRockets(game, v, now, rt) {
+    const ctx = this.ctx;
+    const perTick = ROCKET_SPEED / TICK_RATE;
+    for (const rk of game.rockets.values()) {
+      if (rt < rk.tick) continue;
+      let d = (rt - rk.tick + 1) * perTick; // the server moves it one step on its launch tick
+      if (rk.end) {
+        const max = Math.hypot(rk.end.x - rk.x, rk.end.y - rk.y);
+        if (d >= max) continue;
+      }
+      const c = Math.cos(rk.a), s = Math.sin(rk.a);
+      const x = rk.x + c * d, y = rk.y + s * d;
+      if (x < v.x0 - 60 || x > v.x1 + 60 || y < v.y0 - 60 || y > v.y1 + 60) continue;
+      const tail = Math.min(d, 46);
+      const g = ctx.createLinearGradient(x - c * tail, y - s * tail, x, y);
+      g.addColorStop(0, 'rgba(255,146,43,0)');
+      g.addColorStop(1, 'rgba(255,190,90,0.9)');
+      ctx.strokeStyle = g;
+      ctx.lineWidth = 7;
+      ctx.beginPath(); ctx.moveTo(x - c * tail, y - s * tail); ctx.lineTo(x, y); ctx.stroke();
+      const sn = game.snakes.get(rk.by);
+      ctx.fillStyle = sn ? sn.color : '#fff';
+      ctx.beginPath();
+      ctx.moveTo(x + c * 9, y + s * 9);
+      ctx.lineTo(x - c * 5 - s * 5, y - s * 5 + c * 5);
+      ctx.lineTo(x - c * 5 + s * 5, y - s * 5 - c * 5);
+      ctx.closePath(); ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke();
+    }
+    for (const h of game.holes) {
+      if (!h.shown) continue;
+      const k = (now - h.shownAt) / 450;
+      if (k > 1 || h.x < v.x0 - 80 || h.x > v.x1 + 80 || h.y < v.y0 - 80 || h.y > v.y1 + 80) continue;
+      ctx.globalAlpha = (1 - k) * 0.55;
+      ctx.fillStyle = '#ffd8a8';
+      ctx.beginPath(); ctx.arc(h.x, h.y, h.r * (0.4 + 0.8 * k), 0, TAU); ctx.fill();
+      ctx.globalAlpha = 1 - k;
+      ctx.strokeStyle = FUEL_COL;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(h.x, h.y, h.r * (0.7 + 0.7 * k), 0, TAU); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
   }
 
   drawArrow(sn, x, y, a, isMe, now) {

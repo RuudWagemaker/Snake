@@ -22,6 +22,7 @@ export const MSG_TICK = 2;
 export const MSG_INPUTS = 3;
 export const FLAG_GAP = 1;
 export const FLAG_DIED = 2;
+export const FLAG_CUT = 4;   // client only: this point's segment was blasted away by a rocket
 export const TICK_HEADER = 11;
 export const TICK_ENTRY = 18;
 export const MAX_FUTURE = 8;

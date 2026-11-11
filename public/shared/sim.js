@@ -139,6 +139,8 @@ export class SegGrid {
     this.cells = new Map();
     this.x1 = []; this.y1 = []; this.x2 = []; this.y2 = [];
     this.owner = []; this.tick = []; this.w = [];
+    this.cut = [];      // tick from which the segment is gone (blasted by a rocket), else Infinity
+    this.blasts = [];   // {x, y, r, at}: holes that also cut segments added later with tick <= at
   }
   get size() { return this.owner.length; }
   _key(cx, cy) { return (cx + 32768) * 65536 + (cy + 32768); }
@@ -146,6 +148,11 @@ export class SegGrid {
     const i = this.owner.length;
     this.x1.push(x1); this.y1.push(y1); this.x2.push(x2); this.y2.push(y2);
     this.owner.push(owner); this.tick.push(tick); this.w.push(width);
+    let cut = Infinity;
+    for (const b of this.blasts) {
+      if (tick <= b.at && b.at < cut && distSqPointSeg(b.x, b.y, x1, y1, x2, y2) < b.r * b.r) cut = b.at;
+    }
+    this.cut.push(cut);
     const c = this.cell;
     const cx0 = Math.floor(Math.min(x1, x2) / c), cx1 = Math.floor(Math.max(x1, x2) / c);
     const cy0 = Math.floor(Math.min(y1, y2) / c), cy1 = Math.floor(Math.max(y1, y2) / c);
@@ -159,11 +166,38 @@ export class SegGrid {
     }
   }
   /**
-   * Returns the owner of the first segment touching a head of width `hw` at
-   * (px,py), or -2 if none. Segments owned by `selfId` newer than `selfMinTick`
-   * are ignored (the neck).
+   * A rocket hole: from tick `at` on, every segment drawn up to then that
+   * touches the circle is gone. Lines drawn later through the hole are solid.
    */
-  hit(px, py, hw, selfId, selfMinTick) {
+  blast(x, y, r, at) {
+    this.blasts.push({ x, y, r, at });
+    const c = this.cell;
+    const seen = new Set();
+    for (let cx = Math.floor((x - r) / c); cx <= Math.floor((x + r) / c); cx++) {
+      for (let cy = Math.floor((y - r) / c); cy <= Math.floor((y + r) / c); cy++) {
+        const arr = this.cells.get(this._key(cx, cy));
+        if (!arr) continue;
+        for (const i of arr) {
+          if (seen.has(i)) continue;
+          seen.add(i);
+          if (this.tick[i] <= at && at < this.cut[i] &&
+            distSqPointSeg(x, y, this.x1[i], this.y1[i], this.x2[i], this.y2[i]) < r * r) this.cut[i] = at;
+        }
+      }
+    }
+  }
+
+  /** Forget holes that can't affect new segments any more (all new ticks are later). */
+  pruneBlasts(tick) {
+    if (this.blasts.length) this.blasts = this.blasts.filter((b) => b.at >= tick);
+  }
+
+  /**
+   * Returns the owner of the first segment touching a head of width `hw` at
+   * (px,py) on tick `t`, or -2 if none. Segments owned by `selfId` newer than
+   * `selfMinTick` are ignored (the neck), and so are segments blasted away by then.
+   */
+  hit(px, py, hw, selfId, selfMinTick, t = Infinity) {
     const c = this.cell, r = hitDist(hw, MAX_WIDTH);
     const cx0 = Math.floor((px - r) / c), cx1 = Math.floor((px + r) / c);
     const cy0 = Math.floor((py - r) / c), cy1 = Math.floor((py + r) / c);
@@ -174,6 +208,7 @@ export class SegGrid {
         for (let j = 0; j < arr.length; j++) {
           const i = arr[j];
           if (this.owner[i] === selfId && this.tick[i] > selfMinTick) continue;
+          if (t >= this.cut[i]) continue;
           const d = hitDist(hw, this.w[i]);
           if (distSqPointSeg(px, py, this.x1[i], this.y1[i], this.x2[i], this.y2[i]) < d * d) return this.owner[i];
         }
@@ -201,6 +236,6 @@ export function checkHit(grid, zone, x, y, id, t, width = LINE_WIDTH, ghost = fa
   const rr = zone.r - width / 2;
   if (rr <= 0 || dx * dx + dy * dy > rr * rr) return KILLER_ZONE;
   if (ghost) return null; // ghosts pass through lines (not through the zone)
-  const o = grid.hit(x, y, width, id, t - SELF_IGNORE_TICKS);
+  const o = grid.hit(x, y, width, id, t - SELF_IGNORE_TICKS, t);
   return o === -2 ? null : o;
 }

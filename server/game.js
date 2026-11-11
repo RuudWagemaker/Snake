@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { WebSocket } from 'ws';
-import { TICK_MS, COLORS, TRAIL_STYLES, colorLevel } from '../public/shared/constants.js';
+import { TICK_MS, COLORS, TRAIL_STYLES, colorLevel, FIRE_LATE_TICKS, FIRE_AHEAD_TICKS } from '../public/shared/constants.js';
 import { decodeInputList } from '../public/shared/protocol.js';
 import { Room } from './room.js';
 import { InputBuffer } from './inputs.js';
@@ -171,6 +171,16 @@ class Client {
         this.server.stats.visit(this.token);
         this.send({ t: 'profile', ...this.server.stats.summary(this.token), online: this.server.clients.size });
         break;
+      case 'fire': {
+        // Rocket, stamped with the tick the player saw (like inputs), so it starts
+        // from where their snake was on their screen. Not during the countdown.
+        const r = this.room && this.room.state === 'playing' ? this.room.round : null;
+        if (!r || !this.player || !this.player.alive || r.tick < r.playTick) break;
+        const t = Number.isInteger(msg.tick) ? msg.tick : r.tick + 1;
+        this.player.fireTick = Math.max(r.tick - FIRE_LATE_TICKS, Math.min(r.tick + FIRE_AHEAD_TICKS, t), r.playTick + 1);
+        this.player.wantFire = true;
+        break;
+      }
       case 'login':
         this.login(msg);
         break;

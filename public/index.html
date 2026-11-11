@@ -53,12 +53,14 @@
     <div id="hud-left">
       <div id="alive" class="pill"></div>
       <div id="kills" class="pill"></div>
+      <div id="fuel" class="pill fuel"></div>
     </div>
     <div id="zone-info" class="pill"></div>
     <div id="effects"></div>
     <canvas id="minimap" width="140" height="140"></canvas>
     <div id="feed"></div>
     <div id="tip" class="tip" hidden></div>
+    <button id="fire" class="fire" hidden aria-label="Fire rocket"><span>&#128640;</span><b id="fire-n"></b><i id="fire-fuel"></i></button>
     <div id="net" hidden></div>
   </div>
 
@@ -83,9 +85,10 @@
       <button id="lb-open" class="ghost slim">&#127942; Ranks</button>
     </div>
     <div class="howto">
-      <div><b>Keyboard</b> &larr; &rarr; or A / D</div>
-      <div><b>Touch</b> hold the left or right half</div>
-      <div><b>Gamepad</b> stick, d-pad or shoulder buttons</div>
+      <div><b>Keyboard</b> &larr; &rarr; or A / D <span class="nw">&middot; Space &#128640;</span></div>
+      <div><b>Touch</b> hold left or right <span class="nw">&middot; &#128640; button</span></div>
+      <div><b>Gamepad</b> stick or shoulders <span class="nw">&middot; A &#128640;</span></div>
+      <div><b>&#9981; 3 fuel = 1 &#128640;</b> <span class="nw">it blasts a hole in a line</span></div>
     </div>
     <div id="status" class="small"></div>
     <div id="version" class="small"></div>

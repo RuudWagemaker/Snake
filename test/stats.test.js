@@ -286,3 +286,43 @@ test('sign in over the WebSocket (Google check stubbed)', { timeout: 10000 }, as
     await srv.close();
   }
 });
+
+test('rockets: fuel, firing and a hole in a line', () => {
+  const server = { clients: new Set(), removeRoom() {}, stats: null };
+  const sent = [];
+  const fake = {
+    ws: { readyState: 1 }, name: 'me', token: A, inputs: new InputBuffer(),
+    send: (o) => sent.push(o), sendBinary() {}, sendRaw: (raw) => { if (typeof raw === 'string') sent.push(JSON.parse(raw)); },
+  };
+  const room = new Room(server, 1);
+  room.addClient(fake);
+  while (room.state !== 'playing') room.step();
+  const r = room.round;
+  while (r.tick <= r.playTick + 10) room.step(); // countdown over: snakes move a bit
+  const me = fake.player;
+  const t0 = r.tick;
+  const wx = me.x + Math.cos(me.a) * 200, wy = me.y + Math.sin(me.a) * 200;
+  const nx = -Math.sin(me.a), ny = Math.cos(me.a);
+  for (let i = -20; i < 20; i++) r.grid.add(wx + nx * i * 5, wy + ny * i * 5, wx + nx * (i + 1) * 5, wy + ny * (i + 1) * 5, 99, t0);
+  me.wantFire = true;            // no fuel: nothing happens
+  me.fireTick = r.tick + 1;
+  room.step();
+  assert.ok(!sent.some((m) => m.t === 'rocket'));
+  me.fuel = 3;
+  me.wantFire = true;
+  me.fireTick = r.tick - 5;      // stamped a little in the past (lag): starts where it was aimed
+  const aimed = { ...me.hist[(r.tick - 5) % 32] };
+  room.step();
+  const launch = sent.find((m) => m.t === 'rocket');
+  assert.ok(launch, 'rocket launched');
+  assert.equal(launch.tick, aimed.t);
+  assert.ok(Math.hypot(launch.x - aimed.x, launch.y - aimed.y) < 20, 'from the aimed head position');
+  assert.equal(me.fuel, 0);
+  let blast = null;
+  for (let i = 0; i < 30 && !blast; i++) { room.step(); blast = sent.find((m) => m.t === 'blast'); }
+  assert.ok(blast && blast.r > 0, 'hit the wall');
+  assert.ok(Math.hypot(blast.x - wx, blast.y - wy) < 15);
+  assert.equal(me.picks.blast, 1);
+  assert.notEqual(r.grid.hit(wx, wy, 6, -1, 0, blast.at - 1), -2);
+  assert.equal(r.grid.hit(wx, wy, 6, -1, 0, blast.at), -2);
+});

@@ -45,6 +45,8 @@ const SOUNDS = {
   kill: () => { tone(880, 880, 0.12, { vol: 0.6 }); tone(1320, 1320, 0.25, { vol: 0.6, at: 0.09 }); },
   death: () => { tone(180, 45, 0.5, { type: 'triangle', vol: 0.9 }); tone(90, 40, 0.5, { type: 'sawtooth', vol: 0.2 }); },
   zone: () => { tone(440, 440, 0.12, { type: 'square', vol: 0.2 }); tone(440, 440, 0.12, { type: 'square', vol: 0.2, at: 0.2 }); },
+  launch: () => { tone(300, 900, 0.25, { type: 'sawtooth', vol: 0.18 }); tone(150, 500, 0.25, { type: 'triangle', vol: 0.3 }); },
+  boom: () => { tone(120, 35, 0.45, { type: 'sawtooth', vol: 0.35 }); tone(70, 30, 0.5, { type: 'triangle', vol: 0.8 }); },
   win: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, f, i === 3 ? 0.5 : 0.16, { type: 'triangle', vol: 0.6, at: i * 0.12 })),
 };
 

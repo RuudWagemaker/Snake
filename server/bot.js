@@ -58,7 +58,7 @@ export function botThink(p, round, zone, zt, t) {
   // instead of one per simulated step keeps the server cheap.
   const zEnd = zoneAt(round.plan, zt + b.horizon);
   const s = SIM;
-  let bestScore = -Infinity, bestTurn = 0;
+  let bestScore = -Infinity, bestTurn = 0, longest = 0;
 
   for (const [turn, hold] of OPTIONS) {
     s.x = p.x; s.y = p.y; s.a = p.a;
@@ -69,6 +69,7 @@ export function botThink(p, round, zone, zt, t) {
         if (checkHit(round.grid, zEnd, s.x, s.y, p.id, t + k) !== null) { survived = k; break; }
       }
     }
+    if (survived > longest) longest = survived;
     let score = survived * 10;
     if (survived === b.horizon) {
       // Reward paths that end up facing open space.
@@ -95,7 +96,23 @@ export function botThink(p, round, zone, zt, t) {
     if (score > bestScore) { bestScore = score; bestTurn = turn; }
   }
   b.turn = bestTurn;
+  b.trapped = longest < b.horizon; // every manoeuvre crashes: time for a rocket
   return bestTurn;
+}
+
+/**
+ * Should this bot (which has fuel for a rocket) fire now? Only when it's about
+ * to be trapped and there's a line close ahead to blast. Weaker bots react
+ * later and less often.
+ */
+export function botWantsRocket(p, round, zone, t) {
+  const b = p.brain;
+  if (!b || !b.trapped || t < (b.fireAfter || 0)) return false;
+  const k = round.botSkill ?? 1;
+  b.fireAfter = t + 6 + Math.round(10 * (1 - k)); // don't decide again right away
+  if (Math.random() > 0.25 + 0.6 * k) return false;
+  const d = ray(round, zone, p.x, p.y, p.a, p.id, t + 12);
+  return d >= 24 && d < RAY_MAX;
 }
 
 const RAY_STEP = 12;

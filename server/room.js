@@ -2,12 +2,13 @@ import {
   TICK_RATE, MIN_PLAYERS, MAX_PLAYERS, LOBBY_SECONDS, NEXT_ROUND_LOBBY_SECONDS, PRIVATE_LOBBY_SECONDS,
   COUNTDOWN_SECONDS, END_SECONDS, KILLER_LEFT, COLORS, fieldRadius,
   POWERUPS, POWERUP_TYPES, EFFECT_DELAY, ITEM_RADIUS, OTHERS_RANGE, LINE_WIDTH,
+  FUEL_SHARE, FUEL_PER_ROCKET, MAX_FUEL, ROCKET_SPEED, ROCKET_RANGE, ROCKET_WIDTH, BLAST_R, DT, FIRE_LATE_TICKS,
 } from '../public/shared/constants.js';
 import {
   mulberry32, stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt, hitDist,
 } from '../public/shared/sim.js';
 import { encodeTickBody, writeTickHeader, FLAG_GAP, FLAG_DIED, MAX_FUTURE } from '../public/shared/protocol.js';
-import { botThink, botName } from './bot.js';
+import { botThink, botName, botWantsRocket } from './bot.js';
 
 const LOBBY_TICKS = LOBBY_SECONDS * TICK_RATE;
 const PRIVATE_LOBBY_TICKS = PRIVATE_LOBBY_SECONDS * TICK_RATE;
@@ -17,6 +18,7 @@ const END_TICKS = END_SECONDS * TICK_RATE;
 // advance, so clients can draw them "in the present" exactly, without guessing.
 const BOT_AHEAD = 8;
 const ITEM_CHECK_TICKS = 15;    // how often items are topped up / removed outside the zone
+const HIST = 32;                // ticks of head positions kept per player (> FIRE_LATE_TICKS)
 
 function makeSpawns(rng, n, R0) {
   const spawns = [];
@@ -200,6 +202,11 @@ export class Room {
         turn: 0,
         kills: 0,
         picks: {},              // power-ups picked up, for daily missions
+        // fuel cans (FUEL_PER_ROCKET make a rocket). SIM_FUEL: dev/testing start amount
+        fuel: Math.min(MAX_FUEL, Number(process.env.SIM_FUEL) || 0),
+        wantFire: false,        // the player pressed fire: launched at fireTick
+        fireTick: 0,
+        hist: [],               // recent heads by tick % HIST, so a late fire starts where it was aimed
         place: 0,
         deathTick: -1,
         gaps: new GapSchedule(seed, id),
@@ -233,15 +240,17 @@ export class Room {
       items: [],          // power-ups on the field: {id, type, x, y}
       nextItemId: 1,
       effects: [],        // active power-up effects: {type, start, end, targets}
+      rockets: [],        // flying rockets: {id, by, x, y, a, dist}
+      nextRocketId: 1,
       // SIM_ITEMS: dev/testing override for the number of power-ups on the field
-      itemTarget: Number(process.env.SIM_ITEMS) || Math.max(6, Math.min(18, n)),
+      itemTarget: Number(process.env.SIM_ITEMS) || Math.max(8, Math.min(24, Math.round(n * 1.3))),
       rng: mulberry32(seed ^ 0x51ed27),
     };
     this.state = 'playing';
     const zone0 = zoneAt(this.round.plan, 0);
     for (let i = 0; i < this.round.itemTarget; i++) this.spawnItem(zone0);
 
-    const info = players.map((p) => ({ id: p.id, name: p.name, color: p.color, style: p.style, bot: p.bot, x: p.x, y: p.y, a: p.a }));
+    const info = players.map((p) => ({ id: p.id, name: p.name, color: p.color, style: p.style, bot: p.bot, x: p.x, y: p.y, a: p.a, fuel: p.fuel || undefined }));
     for (const c of this.clients) {
       c.send({ t: 'start', you: c.player.id, seed, R0, playTick: this.round.playTick, tick: 0, players: info, items: this.round.items });
     }
@@ -282,6 +291,8 @@ export class Room {
         const solid = !p.gaps.isGap(zt) && !m.ghost;
         if (solid && p.solid) r.grid.add(px, py, p.x, p.y, p.id, t, m.width);
         p.solid = solid;
+        const h = p.hist[t % HIST] || (p.hist[t % HIST] = {});
+        h.t = t; h.x = p.x; h.y = p.y; h.a = p.a;
         p.width = m.width;
         p.ghost = m.ghost;
         p.shield = m.shield;
@@ -309,6 +320,7 @@ export class Room {
     }
 
     if (moving) {
+      this.rockets(deaths, zone, t);
       this.pickups(deaths, t);
       if (t % ITEM_CHECK_TICKS === 0) this.maintainItems(zone, t);
       this.planBots(deaths, t);
@@ -348,6 +360,61 @@ export class Room {
     }
   }
 
+  // ---- rockets -------------------------------------------------------------
+
+  /** Launch rockets for players who pressed fire, then move all rockets one tick. */
+  rockets(deaths, zone, t) {
+    const r = this.round;
+    for (const p of r.players) {
+      if (p.bot && p.alive && !deaths.has(p) && p.fuel >= FUEL_PER_ROCKET && botWantsRocket(p, r, zone, t)) {
+        p.wantFire = true;
+        p.fireTick = t;
+      }
+      if (!p.wantFire || t < p.fireTick) continue; // stamped for a tick that hasn't come yet
+      p.wantFire = false;
+      if (!p.alive || deaths.has(p) || p.fuel < FUEL_PER_ROCKET) continue;
+      p.fuel -= FUEL_PER_ROCKET;
+      // From the head as it was on the stamped tick (what the player saw), just in
+      // front of it so it never hits its own neck. A late one catches up below.
+      const ft = Math.max(p.fireTick, t - FIRE_LATE_TICKS);
+      const h = p.hist[ft % HIST];
+      const from = h && h.t === ft ? h : { t, x: p.x, y: p.y, a: p.a };
+      const off = 8 + p.width;
+      const rk = {
+        id: r.nextRocketId++, by: p.id, from: from.t, catchUp: t - from.t, dist: 0, a: from.a,
+        x: Math.fround(from.x + Math.cos(from.a) * off), y: Math.fround(from.y + Math.sin(from.a) * off),
+      };
+      r.rockets.push(rk);
+      this.broadcast({ t: 'rocket', id: rk.id, by: p.id, x: rk.x, y: rk.y, a: rk.a, tick: from.t, fuel: p.fuel });
+    }
+    r.grid.pruneBlasts(t);
+    if (!r.rockets.length) return;
+    const step = ROCKET_SPEED * DT, sub = 4;
+    const keep = [];
+    for (const rk of r.rockets) {
+      const cx = Math.cos(rk.a) * (step / sub), cy = Math.sin(rk.a) * (step / sub);
+      let end = null;
+      const steps = sub * (1 + rk.catchUp);
+      rk.catchUp = 0;
+      for (let k = 0; k < steps && !end; k++) {
+        rk.x += cx; rk.y += cy; rk.dist += step / sub;
+        // the shooter's own line drawn after the shot is ignored (it runs right behind the rocket)
+        if (r.grid.hit(rk.x, rk.y, ROCKET_WIDTH, rk.by, rk.from, t) !== -2) end = { r: BLAST_R };
+        else if (Math.hypot(rk.x - zone.x, rk.y - zone.y) > zone.r || rk.dist >= ROCKET_RANGE) end = { r: 0 };
+      }
+      if (!end) { keep.push(rk); continue; }
+      const at = t + EFFECT_DELAY;
+      const x = Math.fround(rk.x), y = Math.fround(rk.y);
+      if (end.r) {
+        r.grid.blast(x, y, end.r, at);
+        const shooter = r.players[rk.by - 1];
+        if (shooter) shooter.picks.blast = (shooter.picks.blast || 0) + 1; // for missions
+      }
+      this.broadcast({ t: 'blast', id: rk.id, by: rk.by, x, y, r: end.r, at });
+    }
+    r.rockets = keep;
+  }
+
   // ---- power-ups -----------------------------------------------------------
 
   spawnItem(zone) {
@@ -360,7 +427,7 @@ export class Room {
       if (r.grid.hit(x, y, ITEM_RADIUS * 3, -1, 0) !== -2) continue;
       if (r.players.some((p) => p.alive && Math.hypot(p.x - x, p.y - y) < 120)) continue;
       if (r.items.some((it) => Math.hypot(it.x - x, it.y - y) < 150)) continue;
-      const type = POWERUP_TYPES[Math.floor(r.rng() * POWERUP_TYPES.length)];
+      const type = r.rng() < FUEL_SHARE ? 'fuel' : POWERUP_TYPES[Math.floor(r.rng() * POWERUP_TYPES.length)];
       const item = { id: r.nextItemId++, type, x: Math.round(x), y: Math.round(y) };
       r.items.push(item);
       return item;
@@ -392,11 +459,17 @@ export class Room {
     const r = this.round;
     for (let i = r.items.length - 1; i >= 0; i--) {
       const it = r.items[i];
-      const p = r.players.find((q) => q.alive && !deaths.has(q) &&
+      const fuel = it.type === 'fuel';
+      const p = r.players.find((q) => q.alive && !deaths.has(q) && (!fuel || q.fuel < MAX_FUEL) &&
         Math.hypot(q.x - it.x, q.y - it.y) < ITEM_RADIUS + q.width / 2);
       if (!p) continue;
       r.items.splice(i, 1);
       p.picks[it.type] = (p.picks[it.type] || 0) + 1;
+      if (fuel) {
+        p.fuel++;
+        this.broadcast({ t: 'pickup', item: it.id, type: it.type, by: p.id, x: it.x, y: it.y, start: t, end: t, targets: [], fuel: p.fuel });
+        continue;
+      }
       const def = POWERUPS[it.type];
       const targets = def.good
         ? [p.id]
