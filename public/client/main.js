@@ -118,6 +118,9 @@ let TOKEN = token();
 // switches to the account's progress. Signing out starts a fresh guest.
 
 let googleReady = false;
+function googleExpected() {
+  try { return localStorage.getItem('cr-google') === '1'; } catch { return false; }
+}
 function accountName() {
   try { return localStorage.getItem('cr-account'); } catch { return null; }
 }
@@ -128,15 +131,17 @@ function showAccount() {
     el.innerHTML = `Signed in${name ? ' as <b>' + esc(name) + '</b>' : ''}<a id="sign-out">sign out</a>`;
     $('sign-out').addEventListener('click', signOut);
     show(el);
-  } else if (googleReady) {
+  } else if (googleReady || googleExpected()) {
+    // Until Google's script has loaded, keep the button's space free (no jump later).
     el.innerHTML = '<div id="gbtn"></div><div class="small">Sign in to keep your level on every device</div>';
-    window.google.accounts.id.renderButton($('gbtn'), { theme: 'filled_black', size: 'large', shape: 'pill', text: 'signin_with', width: 240 });
+    if (googleReady) window.google.accounts.id.renderButton($('gbtn'), { theme: 'filled_black', size: 'large', shape: 'pill', text: 'signin_with', width: 240 });
     show(el);
   } else {
     show(el, false);
   }
 }
 function setupGoogle(clientId) {
+  try { localStorage.setItem('cr-google', '1'); } catch {}
   if (googleReady || document.getElementById('gsi')) return;
   const s = document.createElement('script');
   s.id = 'gsi';
@@ -174,6 +179,7 @@ function signOut() {
     else localStorage.removeItem('cr-token');
     localStorage.removeItem('cr-guest');
     localStorage.removeItem('cr-account');
+    localStorage.removeItem('cr-profile');
   } catch {}
   try { window.google?.accounts.id.disableAutoSelect(); } catch {}
   location.reload(); // the guest token (or a fresh one) on the next load
@@ -201,6 +207,7 @@ function showMissions(list) {
 }
 function showProfile(p) {
   lastProfile = p;
+  try { localStorage.setItem('cr-profile', JSON.stringify(p)); } catch {} // shown right away next time
   myLevel = p.level;
   if (!p.games && !p.xp) {
     ui.me.innerHTML = roomCode ? "Rooms give XP, not leaderboard points." : 'Play a match to get on the leaderboard.';
@@ -360,6 +367,11 @@ $('share').addEventListener('click', () => {
   share(text, roomLink(), ui.shareMsg);
 });
 showRoomInfo();
+// Last known level and missions straight away (fresh ones replace them in a moment).
+try {
+  const cached = JSON.parse(localStorage.getItem('cr-profile') || 'null');
+  if (cached && typeof cached === 'object' && cached.level) showProfile({ ...cached, online: 0 });
+} catch {}
 
 async function goFullscreen() {
   if (!isTouch) return;

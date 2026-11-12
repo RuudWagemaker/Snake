@@ -46,6 +46,10 @@ button {
 button:disabled { opacity: .5; cursor: default; }
 button.ghost { background: #263049; }
 #menu { padding-top: 40px; }
+/* The menu grows while loading (level, missions, sign-in), so it hangs from a
+   fixed top instead of being centred: nothing above the new lines moves. */
+#menu { top: max(16px, env(safe-area-inset-top), calc(50vh - 370px)); transform: translateX(-50%); }
+#status:empty { display: none; }
 button.icon-btn { position: absolute; top: 6px; right: 6px; width: 38px; height: 38px; margin: 0; padding: 0; font-size: 20px; background: transparent; border-radius: 50%; }
 button.icon-btn:hover { background: #263049; }
 button.slim { font-size: 16px; padding: 11px; font-weight: 700; }
@@ -83,7 +87,7 @@ button.slim { font-size: 16px; padding: 11px; font-weight: 700; }
 .missions .m.done b { color: #51cf66; }
 .missions .m.done i { color: var(--muted); }
 .account { margin: 4px 0 10px; }
-.account #gbtn { display: flex; justify-content: center; min-height: 44px; }
+.account #gbtn { display: flex; justify-content: center; height: 44px; overflow: hidden; }
 .account .small { margin-top: 4px; }
 .account a { color: var(--accent2); margin-left: 4px; padding: 12px 10px; margin: -6px 0 -6px 4px; display: inline-block; cursor: pointer; text-decoration: underline; }
 .mdone { color: #51cf66; font-weight: 700; font-size: 14px; margin: 2px 0; }
@@ -189,4 +193,22 @@ body:has(#dead:not([hidden])) #feed { display: none; }
   .fx { font-size: 12px; padding: 4px 10px 6px; }
   #feed { font-size: 12px; }
   #net { top: calc(max(12px, env(safe-area-inset-top)) + 104px); font-size: 10.5px; padding: 6px 9px; }
+}
+
+/* Short screens (small phones, laptops): a more compact menu, and it scrolls if it still doesn't fit. */
+#menu { max-height: calc(100dvh - 2 * max(16px, env(safe-area-inset-top))); overflow-y: auto; touch-action: pan-y; overscroll-behavior: contain; }
+@media (max-height: 780px) {
+  #menu { padding: 34px 20px 16px; }
+  #menu h1 { font-size: 32px; margin-bottom: 2px; }
+  #menu .tag { margin-bottom: 12px; font-size: 14px; }
+  #menu input { padding: 10px 14px; font-size: 17px; }
+  #menu #play { margin-top: 10px; padding: 12px; font-size: 20px; }
+  #me { margin: 10px 0 6px; }
+  .missions { margin: 8px 0 6px; padding: 6px 12px; }
+  .missions .m { line-height: 1.5; }
+  .account { margin: 2px 0 6px; }
+  .account .small { display: none; }
+  #menu .row button { margin-top: 2px; }
+  .howto { margin-top: 10px; font-size: 13px; line-height: 1.5; }
+  #version { margin-top: 6px; }
 }
