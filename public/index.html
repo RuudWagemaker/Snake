@@ -60,14 +60,17 @@
     <canvas id="minimap" width="140" height="140"></canvas>
     <div id="feed"></div>
     <div id="tip" class="tip" hidden></div>
-    <button id="fire" class="fire" hidden aria-label="Fire rocket"><span>&#128640;</span><b id="fire-n"></b><i id="fire-fuel"></i></button>
+    <div id="skillbar" class="skillbar" hidden>
+      <button class="skill" data-slot="0"><i></i><span></span><b></b><kbd>Space</kbd></button>
+      <button class="skill" data-slot="1"><i></i><span></span><b></b><kbd>Shift</kbd></button>
+    </div>
+    <div id="stick" class="stick" hidden><div></div></div>
     <div id="net" hidden></div>
   </div>
 
   <div id="center-msg"></div>
 
-  <div id="touch-left" class="touch-ind" hidden><span>&#9664;</span></div>
-  <div id="touch-right" class="touch-ind" hidden><span>&#9654;</span></div>
+
 
   <div id="menu" class="panel">
     <button id="sound" class="icon-btn"></button>
@@ -75,6 +78,7 @@
     <p class="tag">Draw your line. Cut&nbsp;them&nbsp;off. Outlast the zone.</p>
     <input id="name" maxlength="16" placeholder="Nickname" autocomplete="off" spellcheck="false" enterkeyhint="go">
     <button id="play" disabled>Connecting&hellip;</button>
+    <button id="skills-open" class="skills-line"></button>
     <div id="me" class="me" hidden></div>
     <div id="room-info" class="small" hidden></div>
     <div id="missions" class="missions" hidden></div>
@@ -85,10 +89,11 @@
       <button id="lb-open" class="ghost slim">&#127942; Ranks</button>
     </div>
     <div class="howto">
-      <div><b>Keyboard</b> &larr; &rarr; or A / D <span class="nw">&middot; Space &#128640;</span></div>
-      <div><b>Touch</b> hold left or right <span class="nw">&middot; &#128640; button</span></div>
-      <div><b>Gamepad</b> stick or shoulders <span class="nw">&middot; A &#128640;</span></div>
-      <div><b>5 fuel dots = 1 &#128640;</b> <span class="nw">it blasts a hole in a line</span></div>
+      <div class="no-touch"><b>Keyboard</b> &larr; &rarr; steer &middot; Space / Shift skills</div>
+      <div class="touch-only"><b>Steer</b> drag a thumb where you want to go</div>
+      <div class="touch-only"><b>Skills</b> the buttons on the right</div>
+      <div class="no-touch"><b>Gamepad</b> stick &middot; A / B skills</div>
+      <div><b>Fuel dots</b> pay for your skills</div>
     </div>
     <div id="status" class="small"></div>
     <div id="version" class="small"></div>
@@ -125,6 +130,14 @@
     <div id="styles" class="tabs"></div>
     <p id="skin-msg" class="small">Level up to unlock more.</p>
     <button id="skin-close" class="ghost slim">Done</button>
+  </div>
+
+  <div id="skills" class="panel" hidden>
+    <h2>Your skills</h2>
+    <p class="small">Pick 2. They cost fuel: collect the orange dots during a match.</p>
+    <div id="skill-cards" class="skill-cards"></div>
+    <p id="skills-msg" class="small"></p>
+    <button id="skills-close" class="ghost slim">Done</button>
   </div>
 
   <div id="lb" class="panel" hidden>

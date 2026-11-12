@@ -1,9 +1,9 @@
-import { LINE_WIDTH, MAX_WIDTH, ITEM_RADIUS, FUEL_RADIUS, POWERUPS, FUEL, ROCKET_SPEED, TICK_RATE } from '../shared/constants.js';
+import { LINE_WIDTH, MAX_WIDTH, FUEL_RADIUS, ROCKET_SPEED, TICK_RATE } from '../shared/constants.js';
 import { FLAG_GAP, FLAG_CUT } from '../shared/protocol.js';
 import { CHUNK } from './game.js';
 
 const TAU = Math.PI * 2;
-const GOOD = '#2ecc71', BAD = '#ff4d6d', FUEL_COL = '#ff922b';
+const GOOD = '#2ecc71', BRAKE = '#74c0fc', FUEL_COL = '#ff922b';
 
 /** Collects line segments into one Path2D per line width (power-ups change width). */
 class Runs {
@@ -192,8 +192,14 @@ export class Renderer {
         if (countdown) this.drawArrow(sn, hx, hy, ha, sn === game.me, f.now);
         const tick = sn === game.me && game.controlling ? game.lastTarget - 1 + game.alpha : rt;
         const m = game.modsNow(sn, tick, this.mods || (this.mods = {}));
-        const hr = Math.max(LINE_WIDTH, m.width) * 0.85;
-        if (m.ghost) ctx.globalAlpha = 0.45 + 0.15 * Math.sin(f.now / 90);
+        // jumping: a bigger head over a shadow, as if it's in the air
+        const hr = Math.max(LINE_WIDTH, m.width) * 0.85 * (m.ghost ? 1.5 : 1);
+        if (m.ghost) {
+          ctx.globalAlpha = 0.35;
+          ctx.fillStyle = '#000';
+          ctx.beginPath(); ctx.arc(hx + 5, hy + 8, hr * 0.8, 0, TAU); ctx.fill();
+          ctx.globalAlpha = 1;
+        }
         ctx.fillStyle = this.liveColor(sn, f.now);
         ctx.beginPath();
         ctx.arc(hx, hy, hr, 0, TAU);
@@ -203,16 +209,9 @@ export class Renderer {
         ctx.arc(hx + Math.cos(ha) * hr * 0.3, hy + Math.sin(ha) * hr * 0.3, hr * 0.38, 0, TAU);
         ctx.fill();
         ctx.globalAlpha = 1;
-        if (m.shield) {
-          ctx.strokeStyle = GOOD;
-          ctx.globalAlpha = 0.6 + 0.3 * Math.sin(f.now / 110);
-          ctx.lineWidth = 2.5;
-          ctx.beginPath(); ctx.arc(hx, hy, hr + 8, 0, TAU); ctx.stroke();
-          ctx.globalAlpha = 1;
-        }
-        if (m.reverse || m.speed !== 1 || m.ghost || m.width !== LINE_WIDTH) {
-          // a ring shows a snake is powered up (green = its own, red = hit)
-          ctx.strokeStyle = m.reverse || m.width > LINE_WIDTH || m.speed < 1 ? BAD : GOOD;
+        if (m.speed !== 1) {
+          // a ring shows a skill is on: green = boost, blue = brake
+          ctx.strokeStyle = m.speed < 1 ? BRAKE : GOOD;
           ctx.lineWidth = 1.5;
           ctx.setLineDash([3, 3]);
           ctx.beginPath(); ctx.arc(hx, hy, hr + 5, 0, TAU); ctx.stroke();
@@ -353,19 +352,7 @@ export class Renderer {
         ctx.globalAlpha = 1;
         ctx.fillStyle = '#ffd8a8';
         ctx.beginPath(); ctx.arc(it.x, it.y, FUEL_RADIUS * 0.8 * pop, 0, TAU); ctx.fill();
-        continue;
       }
-      const def = POWERUPS[it.type];
-      const col = def.good ? GOOD : BAD;
-      ctx.globalAlpha = 0.25;
-      ctx.fillStyle = col;
-      ctx.beginPath(); ctx.arc(it.x, it.y, ITEM_RADIUS * 1.6 * pulse, 0, TAU); ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.beginPath(); ctx.arc(it.x, it.y, ITEM_RADIUS, 0, TAU); ctx.fill();
-      ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.stroke();
-      ctx.fillStyle = '#fff';
-      ctx.font = `700 ${ITEM_RADIUS * 1.15}px system-ui, sans-serif`;
-      ctx.fillText(def.icon, it.x, it.y + 1);
     }
     // Floating "+SPEED" texts where something was picked up
     game.popups = game.popups.filter((p) => now - p.at < 1200);
@@ -376,7 +363,7 @@ export class Renderer {
       ctx.lineWidth = 4;
       ctx.strokeStyle = 'rgba(6,8,13,0.8)';
       ctx.strokeText(p.text, p.x, p.y - 20 - k * 30);
-      ctx.fillStyle = p.fuel ? FUEL_COL : p.good ? GOOD : BAD;
+      ctx.fillStyle = p.color || GOOD;
       ctx.fillText(p.text, p.x, p.y - 20 - k * 30);
     }
     ctx.globalAlpha = 1;

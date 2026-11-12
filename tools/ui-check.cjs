@@ -79,6 +79,16 @@ async function main() {
     const msg = await p.textContent('#skin-msg');
     if (!/level 3/i.test(msg)) problems.push(`style panel: locked trail gave "${msg}"`);
     await p.click('#skin-close');
+    // skills panel: pick Boost (replaces the oldest pick), then put Rocket back
+    await p.click('#skills-open');
+    await p.waitForTimeout(300);
+    await shot(p, '02b-phone-skills');
+    await checkOverflow(p, 'skills');
+    await p.click('#skill-cards [data-k="boost"]');
+    await p.click('#skill-cards [data-k="rocket"]');
+    const picked = await p.textContent('#skills-msg');
+    if (!/Rocket/.test(picked) || !/Boost/.test(picked)) problems.push(`skills: pick didn't work ("${picked}")`);
+    await p.click('#skills-close');
 
     await p.click('#lb-open');
     await p.waitForTimeout(300);
@@ -95,22 +105,29 @@ async function main() {
     await shot(p, '05-phone-game');
     const hud = await p.textContent('#alive');
     if (!/alive/.test(hud)) problems.push(`game: HUD shows "${hud}"`);
-    // rocket: the phone has a fire button; 2 rockets at the start (SIM_FUEL)
-    if (!(await visible(p, '#fire'))) problems.push('game: no rocket button on the phone');
+    // skills: the phone has 2 skill buttons; full fuel at the start (SIM_FUEL); fire the rocket
+    if (!(await visible(p, '#skillbar'))) problems.push('game: no skill buttons on the phone');
     else {
       const before = await p.textContent('#fuel');
-      await p.tap('#fire').catch(() => {});
+      const slot = await p.evaluate(() => [...document.querySelectorAll('#skillbar .skill span')].findIndex((s) => s.textContent === '\u{1F680}'));
+      await p.tap(`#skillbar .skill[data-slot="${Math.max(0, slot)}"]`).catch(() => {});
       await p.waitForTimeout(350);
       await shot(p, '05b-phone-rocket');
       await p.waitForTimeout(700);
       const after = await p.textContent('#fuel');
-      if (!/2/.test(before) || !/1/.test(after)) problems.push(`rocket: fuel didn't go down ("${before}" -> "${after}")`);
+      if (!/10/.test(before) || !/\b5\b/.test(after)) problems.push(`rocket: fuel didn't go down by 5 ("${before}" -> "${after}")`);
     }
 
     if (!QUICK) {
-      // Hold right so we spiral and crash, then wait for the round to end.
+      // Steer with the stick (drag a thumb) so we spiral and crash, then wait for the round to end.
+      const cdp = await p.context().newCDPSession(p);
+      const tp = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1 }] });
+      await tp('touchStart', 120, 600); await tp('touchMove', 140, 560); await tp('touchMove', 170, 520);
+      await p.waitForTimeout(250);
+      if (!(await visible(p, '#stick'))) problems.push('stick: not shown while dragging');
+      await shot(p, '05c-phone-stick');
+      await tp('touchMove', 200, 600);
       const box = p.viewportSize();
-      await p.touchscreen.tap(box.width * 0.9, box.height * 0.5).catch(() => {});
       await p.waitForSelector('#dead:not([hidden]), #end:not([hidden])', { timeout: 240000 });
       if (await visible(p, '#dead')) await shot(p, '06-phone-dead');
       await p.waitForSelector('#end:not([hidden])', { timeout: 300000 });

@@ -231,7 +231,7 @@ export class Stats {
   /**
    * Record a finished match for one human. Returns what they earned, for the
    * end screen. Unranked matches (friends' rooms) only give XP (missions count too).
-   * `picks`: power-ups picked up this match, {type: count}.
+   * `picks`: counts from this match: fuel picked up, skills used, lines blasted.
    */
   record(token, name, place, n, kills, now = Date.now(), ranked = true, picks = {}) {
     if (!validToken(token)) return null;

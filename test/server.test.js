@@ -6,7 +6,7 @@ import { Room } from '../server/room.js';
 import { InputBuffer } from '../server/inputs.js';
 import { stepSnake, modsAt } from '../public/shared/sim.js';
 import { encodeInput, decodeTick, FLAG_DIED } from '../public/shared/protocol.js';
-import { TICK_RATE } from '../public/shared/constants.js';
+import { TICK_RATE, SKILLS } from '../public/shared/constants.js';
 
 test('a bot-filled round always ends with a ranking', () => {
   const server = { clients: new Set(), removeRoom() {} };
@@ -23,15 +23,15 @@ test('a bot-filled round always ends with a ranking', () => {
   assert.equal(new Set(end.ranking.map((r) => r.id)).size, room.round.n);
 });
 
-test('server applies tick-stamped inputs exactly as the client predicts (with power-ups)', { timeout: 40000 }, async () => {
-  process.env.SIM_ITEMS = '400'; // lots of power-ups, so effects happen during the test
+test('server applies tick-stamped inputs exactly as the client predicts (with skills)', { timeout: 40000 }, async () => {
+  process.env.SIM_FUEL = '10'; // fuel for a few skills
   const srv = await startServer({ port: 0 });
   try {
     const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
     ws.binaryType = 'arraybuffer';
     const hello = await new Promise((resolve) => ws.once('message', (d) => resolve(JSON.parse(d.toString()))));
     assert.equal(hello.t, 'hello');
-    ws.send(JSON.stringify({ t: 'join', name: '<b>Tester</b>', build: hello.build }));
+    ws.send(JSON.stringify({ t: 'join', name: '<b>Tester</b>', build: hello.build, skills: ['boost', 'brake'] }));
 
     const start = await new Promise((resolve) => {
       ws.on('message', function onMsg(data, isBinary) {
@@ -48,7 +48,7 @@ test('server applies tick-stamped inputs exactly as the client predicts (with po
     ws.on('message', (data, isBinary) => {
       if (isBinary) return;
       const m = JSON.parse(data.toString());
-      if (m.t === 'pickup' && m.targets.length) effects.push(m);
+      if (m.t === 'skill' && m.ok) effects.push({ type: SKILLS[m.k].effect, start: m.start, end: m.end, targets: [m.by], k: m.k, stamped: m.stamped });
     });
     let sentUpTo = 0;
     let prev = null, checked = 0, died = false, lastTurn = 0, lateInputSeen = false;
@@ -57,7 +57,12 @@ test('server applies tick-stamped inputs exactly as the client predicts (with po
         if (!isBinary) return;
         const d = decodeTick(data);
         // Aim inputs a few ticks ahead of the newest state, like the client does.
-        while (sentUpTo < d.tick + 4) { sentUpTo++; ws.send(encodeInput(sentUpTo, pattern(sentUpTo))); }
+        while (sentUpTo < d.tick + 4) {
+          sentUpTo++;
+          ws.send(encodeInput(sentUpTo, pattern(sentUpTo)));
+          // now and then a skill, stamped with a tick ahead (like the client does)
+          if (sentUpTo > start.playTick + 10 && sentUpTo % 45 === 0) ws.send(JSON.stringify({ t: 'skill', k: sentUpTo % 90 ? 'boost' : 'brake', tick: sentUpTo }));
+        }
         if (sentUpTo === d.tick + 4 && d.tick === 1) {
           // A stale input for a tick that already ran must be ignored.
           ws.send(encodeInput(1, -1));
@@ -83,12 +88,13 @@ test('server applies tick-stamped inputs exactly as the client predicts (with po
         if (checked >= 240) resolve();
       });
     });
-    const onMe = effects.filter((e) => e.targets.includes(start.you));
-    console.log(`verified ${checked} ticks, died=${died}, late=${lateInputSeen}, power-ups picked ${effects.length}, affecting me ${onMe.length} (${onMe.map((e) => e.type).join(',')})`);
+    const mine = effects.filter((e) => e.targets.includes(start.you));
+    console.log(`verified ${checked} ticks, died=${died}, late=${lateInputSeen}, my skills used ${mine.length} (${mine.map((e) => e.k).join(',')})`);
     assert.ok(checked > 10 || died, `checked ${checked} ticks`);
+    if (checked > 120) assert.ok(mine.length >= 1, 'skills were used');
     ws.close();
   } finally {
-    delete process.env.SIM_ITEMS;
+    delete process.env.SIM_FUEL;
     await srv.close();
   }
 });

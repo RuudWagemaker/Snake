@@ -1,4 +1,5 @@
 import { stepSnake, zoneAt, checkHit } from '../public/shared/sim.js';
+import { SKILLS } from '../public/shared/constants.js';
 
 const NAMES = [
   'Noodle', 'Zigzag', 'Squiggle', 'Viper', 'Slinky', 'Wiggles', 'Kurve', 'Lasso',
@@ -101,18 +102,29 @@ export function botThink(p, round, zone, zt, t) {
 }
 
 /**
- * Should this bot (which has fuel for a rocket) fire now? Only when it's about
- * to be trapped and there's a line close ahead to blast. Weaker bots react
- * later and less often.
+ * Which of its skills should this bot use now (or null)? Mostly to escape:
+ * when every manoeuvre crashes it jumps, blasts the line ahead or brakes.
+ * Now and then it boosts in open space. Weaker bots react later and less often.
  */
-export function botWantsRocket(p, round, zone, t) {
+export function botSkill(p, round, zone, t) {
   const b = p.brain;
-  if (!b || !b.trapped || t < (b.fireAfter || 0)) return false;
+  if (!b || t < (b.skillAfter || 0)) return null;
   const k = round.botSkill ?? 1;
-  b.fireAfter = t + 6 + Math.round(10 * (1 - k)); // don't decide again right away
-  if (Math.random() > 0.25 + 0.6 * k) return false;
-  const d = ray(round, zone, p.x, p.y, p.a, p.id, t + 12);
-  return d >= 24 && d < RAY_MAX;
+  const has = (s) => p.skills.includes(s) && p.fuel >= SKILLS[s].cost;
+  if (b.trapped) {
+    b.skillAfter = t + 6 + Math.round(10 * (1 - k)); // don't decide again right away
+    if (Math.random() > 0.25 + 0.6 * k) return null;
+    const ahead = ray(round, zone, p.x, p.y, p.a, p.id, t + 12);
+    if (has('jump') && ahead < 70) return 'jump';
+    if (has('rocket') && ahead >= 24 && ahead < RAY_MAX) return 'rocket';
+    if (has('brake')) return 'brake';
+    return null;
+  }
+  if (has('boost') && p.fuel >= 6 && Math.random() < 0.004) {
+    b.skillAfter = t + 90;
+    if (ray(round, zone, p.x, p.y, p.a, p.id, t + 12) >= RAY_MAX) return 'boost';
+  }
+  return null;
 }
 
 const RAY_STEP = 12;

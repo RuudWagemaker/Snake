@@ -2,7 +2,7 @@
 // same three, picked from POOL with the date as the random seed. Missions from
 // the same `group` never show up on the same day.
 
-// count(m) says how much one match adds. m = { place, n, kills, picks: {type: count} }
+// count(m) says how much one match adds. m = { place, n, kills, picks: { fuel, skill, blast } }
 export const POOL = [
   { id: 'kills2', group: 'kills', text: 'Get 2 kills', goal: 2, xp: 20, count: (m) => m.kills },
   { id: 'kills5', group: 'kills', text: 'Get 5 kills', goal: 5, xp: 35, count: (m) => m.kills },
@@ -13,21 +13,15 @@ export const POOL = [
   { id: 'play3', group: 'play', text: 'Play 3 matches', goal: 3, xp: 15, count: () => 1 },
   { id: 'play5', group: 'play', text: 'Play 5 matches', goal: 5, xp: 25, count: () => 1 },
   { id: 'outlast25', group: 'outlast', text: 'Outlast 25 players', goal: 25, xp: 20, count: (m) => Math.max(0, m.n - m.place) },
-  { id: 'power3', group: 'power', text: 'Pick up 3 power-ups', goal: 3, xp: 15, count: (m) => sum(m.picks) },
-  { id: 'fuel20', group: 'power', text: 'Collect 20 fuel', goal: 20, xp: 15, count: (m) => (m.picks && m.picks.fuel) || 0 },
-  { id: 'blast1', group: 'rocket', text: 'Blast a line with a rocket', goal: 1, xp: 20, count: (m) => (m.picks && m.picks.blast) || 0 },
-  { id: 'blast3', group: 'rocket', text: 'Blast 3 lines with rockets', goal: 3, xp: 30, count: (m) => (m.picks && m.picks.blast) || 0 },
-  { id: 'shield', group: 'power', text: 'Pick up a Shield', goal: 1, xp: 15, count: (m) => (m.picks && m.picks.shield) || 0 },
-  { id: 'slow', group: 'power', text: 'Pick up a Slow for your rivals', goal: 1, xp: 15, count: (m) => (m.picks && m.picks.slow) || 0 },
+  { id: 'fuel20', group: 'fuel', text: 'Collect 20 fuel', goal: 20, xp: 15, count: (m) => pick(m, 'fuel') },
+  { id: 'fuel50', group: 'fuel', text: 'Collect 50 fuel', goal: 50, xp: 25, count: (m) => pick(m, 'fuel') },
+  { id: 'skill5', group: 'skill', text: 'Use your skills 5 times', goal: 5, xp: 15, count: (m) => pick(m, 'skill') },
+  { id: 'skill12', group: 'skill', text: 'Use your skills 12 times', goal: 12, xp: 25, count: (m) => pick(m, 'skill') },
 ];
 const BY_ID = new Map(POOL.map((d) => [d.id, d]));
 export const DAILY = 3;
 
-function sum(o) {
-  let s = 0;
-  for (const [k, v] of Object.entries(o || {})) if (k !== 'fuel' && k !== 'blast') s += v; // power-ups only
-  return s;
-}
+const pick = (m, k) => (m.picks && m.picks[k]) || 0;
 
 function seedFrom(str) {
   let h = 2166136261;

@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { WebSocket } from 'ws';
-import { TICK_MS, COLORS, TRAIL_STYLES, colorLevel, FIRE_LATE_TICKS, FIRE_AHEAD_TICKS } from '../public/shared/constants.js';
+import { TICK_MS, COLORS, TRAIL_STYLES, colorLevel, FIRE_LATE_TICKS, FIRE_AHEAD_TICKS, validSkills, SKILLS } from '../public/shared/constants.js';
 import { decodeInputList } from '../public/shared/protocol.js';
 import { Room } from './room.js';
 import { InputBuffer } from './inputs.js';
@@ -156,6 +156,7 @@ class Client {
         this.name = cleanName(msg.name);
         if (validToken(msg.token)) this.token = msg.token;
         this.skin = this.server.allowedSkin(this.token, msg.skin);
+        this.skills = validSkills(msg.skills);
         this.server.join(this, validRoomCode(msg.room) ? msg.room : null);
         break;
       case 'leave':
@@ -171,14 +172,19 @@ class Client {
         this.server.stats.visit(this.token);
         this.send({ t: 'profile', ...this.server.stats.summary(this.token), online: this.server.clients.size });
         break;
-      case 'fire': {
-        // Rocket, stamped with the tick the player saw (like inputs), so it starts
-        // from where their snake was on their screen. Not during the countdown.
+      case 'skill': {
+        // A skill, stamped with the tick the player's screen was at (like inputs):
+        // a rocket starts from where their snake was, a jump starts right then.
+        // Pressed right at GO (the client runs a little ahead) it starts on the first moving tick.
         const r = this.room && this.room.state === 'playing' ? this.room.round : null;
-        if (!r || !this.player || !this.player.alive || r.tick < r.playTick) break;
+        const p = this.player;
+        if (!r || !p || !Object.hasOwn(SKILLS, msg.k)) break;
+        if (!p.alive || !p.skills.includes(msg.k) || p.wantSkills.length >= 4) {
+          this.send({ t: 'skill', by: p.id, k: msg.k, ok: false, fuel: p.fuel }); // so the client undoes it
+          break;
+        }
         const t = Number.isInteger(msg.tick) ? msg.tick : r.tick + 1;
-        this.player.fireTick = Math.max(r.tick - FIRE_LATE_TICKS, Math.min(r.tick + FIRE_AHEAD_TICKS, t), r.playTick + 1);
-        this.player.wantFire = true;
+        p.wantSkills.push({ k: msg.k, tick: Math.max(r.tick - FIRE_LATE_TICKS, Math.min(r.tick + FIRE_AHEAD_TICKS, t), r.playTick + 1) });
         break;
       }
       case 'login':

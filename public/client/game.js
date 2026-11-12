@@ -17,7 +17,7 @@
 //    glide in. While spectating they're shown slightly in the past and
 //    interpolated (smoothest). Either way, if updates stop for a moment they
 //    keep moving instead of freezing.
-import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, ITEM_RADIUS, FUEL_RADIUS, POWERUPS, FUEL, FUEL_PER_ROCKET, MAX_FUEL, EFFECT_DELAY, ROCKET_RANGE, ROCKET_SPEED, ROCKET_WIDTH } from '../shared/constants.js';
+import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, FUEL_RADIUS, FUEL, FUEL_PER_ROCKET, MAX_FUEL, EFFECT_DELAY, ROCKET_RANGE, ROCKET_SPEED, ROCKET_WIDTH, SKILLS, EFFECT_INFO, DEFAULT_SKILLS } from '../shared/constants.js';
 import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt, distSqPointSeg } from '../shared/sim.js';
 import { FLAG_GAP, FLAG_DIED, FLAG_CUT, encodeInput, encodeInputs } from '../shared/protocol.js';
 
@@ -59,7 +59,8 @@ export class Snake {
     this.killer = null;
     this.place = 0;
     this.kills = 0;
-    this.fuel = info.fuel || 0; // fuel dots (FUEL_PER_ROCKET make a rocket)
+    this.fuel = info.fuel || 0; // fuel dots, spent on skills
+    this.skills = info.skills || DEFAULT_SKILLS; // the 2 skills this snake has
     this.chunks = [];      // cached Path2D pieces, owned by the renderer
     this.burstAt = 0;      // when the death effect started (ms)
     this.vox = 0;          // visual offset after extrapolation was corrected (glides to 0)
@@ -155,6 +156,9 @@ export class ClientGame {
     this.rockets = new Map(); // id -> {by, x, y, a, tick, end: {x, y, tick} | null}
     this.holes = [];          // rocket holes {x, y, r, at, shown}: drawn once the server reaches `at`
     this.lastFireAt = 0;
+    this.skillAt = {};
+    this.serverFuel = this.me ? this.me.fuel : 0;
+    this.pendingCost = 0;     // fuel of skills sent that the server hasn't answered yet
     this.tmpMods = {};
 
     // prediction state
@@ -272,7 +276,7 @@ export class ClientGame {
         else this.reconcile(mine, d.tick);
       }
     }
-    if (this.holes.length || this.rockets.size) this.applyHoles();
+    if (this.holes.length || this.rockets.size || this.pendingCost) this.applyHoles();
     return true;
   }
 
@@ -356,15 +360,75 @@ export class ClientGame {
 
   // ---- rockets -----------------------------------------------------------
 
-  /** Press fire. Returns true if a rocket is on its way. */
+  /** Can we use skill `k` right now? */
+  canUse(k) {
+    const def = SKILLS[k];
+    if (!def || !this.controlling || !this.me || !this.me.skills.includes(k) || this.me.fuel < def.cost) return false;
+    if (this.lastTarget === null || this.lastTarget <= this.playTick) return false; // countdown
+    if (def.effect) {
+      // not while the same one is still running
+      const t = this.lastTarget + 1;
+      if (this.effects.some((e) => e.type === def.effect && e.end > t && e.targets.includes(this.myId))) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Use a skill. Jump, boost and brake start on the next tick we simulate, right
+   * away in our own prediction; the server starts them on that same tick (the
+   * message is stamped with it), so nothing needs correcting. Returns true if used.
+   */
+  useSkill(k) {
+    const now = performance.now();
+    if (!this.canUse(k) || now - (this.skillAt[k] || 0) < 250) return false;
+    this.skillAt[k] = now;
+    if (k === 'rocket') return this.fire();
+    const def = SKILLS[k];
+    const start = this.lastTarget + 1;
+    this.net.send({ t: 'skill', k, tick: start });
+    this.effects.push({ type: def.effect, start, end: start + Math.round(def.secs * 30), targets: [this.myId], local: k, at: now });
+    this.spend(def.cost);
+    this.onEvent({ type: 'skill', k, by: this.me, mine: true });
+    return true;
+  }
+
+  // Our fuel = the server's amount minus skills it hasn't answered yet, so a
+  // pickup message in between doesn't make a used skill look ready again.
+  spend(cost) { this.pendingCost += cost; this.syncFuel(); }
+  settled(cost) { this.pendingCost = Math.max(0, this.pendingCost - cost); this.syncFuel(); }
+  syncFuel() { if (this.me) this.me.fuel = Math.max(0, this.serverFuel - this.pendingCost); }
+  setFuel(s, fuel) {
+    if (!s) return;
+    if (s === this.me) { this.serverFuel = fuel; this.syncFuel(); } else s.fuel = fuel;
+  }
+
+  /** The server used (or refused) a skill. */
+  onSkill(m) {
+    const s = this.snakes.get(m.by);
+    if (m.by === this.myId) {
+      // replace our local copy (the oldest one for this skill)
+      const i = this.effects.findIndex((e) => e.local === m.k);
+      if (i >= 0) this.effects.splice(i, 1);
+      if (!m.ok && m.k === 'rocket') for (const [id, rk] of this.rockets) if (rk.local) { this.rockets.delete(id); break; }
+      this.pendingCost = Math.max(0, this.pendingCost - SKILLS[m.k].cost);
+    }
+    this.setFuel(s, m.fuel);
+    if (m.ok && m.k !== 'rocket') {
+      this.effects.push({ type: SKILLS[m.k].effect, start: m.start, end: m.end, targets: [m.by] });
+      if (m.by !== this.myId) this.onEvent({ type: 'skill', k: m.k, by: s, mine: false });
+    }
+    this.effects = this.effects.filter((e) => e.end > this.latestTick - 30);
+  }
+
+  /** Fire a rocket. Returns true if one is on its way. */
   fire() {
     const now = performance.now();
-    if (!this.controlling || !this.me || this.me.fuel < FUEL_PER_ROCKET || now - this.lastFireAt < 300) return false;
-    if (this.lastTarget === null || this.lastTarget <= this.playTick) return false; // countdown
     this.lastFireAt = now;
+    this.spend(SKILLS.rocket.cost);
+    this.onEvent({ type: 'skill', k: 'rocket', by: this.me, mine: true });
     // Stamped with the tick we're showing our snake at, so it leaves from there.
     const tick = this.lastTarget;
-    this.net.send({ t: 'fire', tick });
+    this.net.send({ t: 'skill', k: 'rocket', tick });
     // Draw it right away from our predicted head (the server's copy takes over when it arrives).
     const p = this.pred, w = modsAt(this.effects, this.myId, tick, {}).width;
     const local = { by: this.myId, x: p.x + Math.cos(p.a) * (8 + w), y: p.y + Math.sin(p.a) * (8 + w), a: p.a, tick, end: null, local: true, firedAt: now };
@@ -375,7 +439,8 @@ export class ClientGame {
 
   onRocket(m) {
     const s = this.snakes.get(m.by);
-    if (s) s.fuel = m.fuel;
+    if (m.by === this.myId) this.pendingCost = Math.max(0, this.pendingCost - SKILLS.rocket.cost);
+    this.setFuel(s, m.fuel);
     const rk = { by: m.by, x: m.x, y: m.y, a: m.a, tick: m.tick, end: null, predEnd: this.predictRocket(m) };
     // Our own shot: it replaces the oldest local copy, keeping what's already on
     // screen (e.g. an explosion that started).
@@ -435,8 +500,15 @@ export class ClientGame {
     }
     // forget old ones (rockets after their flight, holes once nothing new can be cut)
     if (this.holes.length > 8) this.holes = this.holes.filter((h) => !h.shown || h.at > this.latestTick - 60);
+    const now = performance.now();
     for (const [id, rk] of this.rockets) {
-      if ((rk.end && rk.end.tick < this.latestTick - 60) || (rk.local && performance.now() - rk.firedAt > 1500)) this.rockets.delete(id);
+      if (rk.local && now - rk.firedAt > 1500) { this.rockets.delete(id); this.settled(SKILLS.rocket.cost); } // never answered
+      else if (rk.end && rk.end.tick < this.latestTick - 60) this.rockets.delete(id);
+    }
+    // a skill the server never answered (lost message): undo it
+    for (let i = this.effects.length - 1; i >= 0; i--) {
+      const e = this.effects[i];
+      if (e.local && now - e.at > 1500) { this.effects.splice(i, 1); this.settled(SKILLS[e.local].cost); }
     }
     this.grid.pruneBlasts(this.latestTick - 60);
   }
@@ -463,24 +535,21 @@ export class ClientGame {
 
   onPickup(m) {
     this.items.delete(m.item);
-    if (m.targets.length) this.effects.push({ type: m.type, start: m.start, end: m.end, targets: m.targets });
-    this.effects = this.effects.filter((e) => e.end > this.latestTick - 30);
-    const def = m.type === 'fuel' ? FUEL : POWERUPS[m.type];
     const by = this.snakes.get(m.by);
-    if (m.type === 'fuel' && by) by.fuel = m.fuel;
-    if (m.type !== 'fuel' || m.by === this.myId) this.popups.push({ x: m.x, y: m.y, text: (def.good ? '+' : '') + def.label.toUpperCase(), good: def.good, fuel: m.type === 'fuel', at: performance.now() });
-    this.onEvent({ type: 'pickup', msg: m, def, by, hitsMe: m.targets.includes(this.myId) });
+    this.setFuel(by, m.fuel);
+    this.onEvent({ type: 'pickup', msg: m, def: FUEL, by });
   }
 
-  /** Power-up effects on our snake right now: [{type, def, left (s), total (s), pending}] */
+  /** Skill effects on our snake right now: [{type, def, left (s), total (s), pending}] */
   myEffects(now) {
-    const t = this.serverTickNow(now);
+    // our own snake runs ahead of the server: use the tick we're showing it at
+    const t = this.controlling && this.lastTarget !== null ? this.lastTarget + this.alpha : this.serverTickNow(now);
     const byType = new Map(); // one entry per type (picking up the same one twice stacks)
     for (const e of this.effects) {
       if (e.end <= t || !e.targets.includes(this.myId)) continue;
       const left = (e.end - Math.max(t, e.start)) / 30;
       const cur = byType.get(e.type);
-      if (!cur || left > cur.left) byType.set(e.type, { type: e.type, def: POWERUPS[e.type], left, total: (e.end - e.start) / 30, pending: t < e.start });
+      if (!cur || left > cur.left) byType.set(e.type, { type: e.type, def: EFFECT_INFO[e.type] || { label: e.type, icon: '', good: true }, left, total: (e.end - e.start) / 30, pending: t < e.start });
     }
     return [...byType.values()];
   }
@@ -524,10 +593,12 @@ export class ClientGame {
     let sent = false;
     while (this.lastTarget < target) {
       const t = ++this.lastTarget;
-      this.net.sendBinary(encodeInput(t, turn));
-      this.pending.push({ tick: t, turn });
+      // `turn` can be a function of our heading (the phone's steering stick)
+      const tr = typeof turn === 'function' ? turn(this.pred.a) : turn;
+      this.net.sendBinary(encodeInput(t, tr));
+      this.pending.push({ tick: t, turn: tr });
       if (this.pending.length > MAX_PENDING) this.pending.shift();
-      this.advanceTo(t, turn);
+      this.advanceTo(t, tr);
       sent = true;
     }
     if (sent) this.sendUdpInputs();

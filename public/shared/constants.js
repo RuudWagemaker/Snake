@@ -66,7 +66,34 @@ export const FUEL = { good: true, label: 'Fuel', icon: '\u26FD' };
 export const FUEL_RADIUS = 6;             // fuel is small dots, many of them
 export const fuelTarget = (n) => Math.max(40, Math.min(120, n * 6)); // dots on the field at the start
 export const FUEL_PER_ROCKET = 5;
-export const MAX_FUEL = 10;               // = 2 rockets
+export const MAX_FUEL = 10;
+export const START_FUEL = 3;              // enough for one small skill right away
+export const DEATH_DROP_EXTRA = 3;        // a crashed snake drops its fuel plus this many dots
+
+// Skills: each player picks 2 in the menu and spends fuel to use them in a match.
+// `effect` is the modifier it puts on your own snake (see modsAt in sim.js):
+// jump = ghost (no line, passes over lines), boost = speed, brake = slow (tighter turns).
+export const SKILLS = {
+  rocket: { label: 'Rocket', icon: '\u{1F680}', cost: FUEL_PER_ROCKET, help: 'Blasts a hole in the first line it hits' },
+  jump:   { label: 'Jump',   icon: '\u{1F998}', cost: 3, effect: 'ghost', secs: 0.45, help: 'Hop over lines for a moment' },
+  boost:  { label: 'Boost',  icon: '\u26A1',     cost: 3, effect: 'speed', secs: 2.5,  help: 'Go faster for 2.5 s' },
+  brake:  { label: 'Brake',  icon: '\u{1F422}', cost: 2, effect: 'slow',  secs: 2,    help: 'Slow down for 2 s to turn much tighter' },
+};
+export const SKILL_IDS = Object.keys(SKILLS);
+export const SKILL_SLOTS = 2;
+export const DEFAULT_SKILLS = ['rocket', 'jump'];
+/** A valid pick of SKILL_SLOTS different skills, or the default. */
+export function validSkills(list) {
+  if (!Array.isArray(list) || list.length !== SKILL_SLOTS) return DEFAULT_SKILLS.slice();
+  if (new Set(list).size !== SKILL_SLOTS || !list.every((k) => Object.hasOwn(SKILLS, k))) return DEFAULT_SKILLS.slice();
+  return list.slice();
+}
+/** Labels for effects on the HUD (from skills). */
+export const EFFECT_INFO = {
+  ghost: { label: 'Jump', icon: SKILLS.jump.icon, good: true },
+  speed: { label: 'Boost', icon: SKILLS.boost.icon, good: true },
+  slow:  { label: 'Brake', icon: SKILLS.brake.icon, good: true },
+};
 export const ROCKET_SPEED = 600;          // world units per second
 export const ROCKET_RANGE = 900;          // flies this far, then fizzles
 export const ROCKET_WIDTH = 4;            // for hitting lines

@@ -327,7 +327,7 @@ test('rockets: fuel, firing and a hole in a line', () => {
   assert.equal(r.grid.hit(wx, wy, 6, -1, 0, blast.at), -2);
 });
 
-test('fuel: many small dots on the field, power-ups as before', () => {
+test('fuel: only fuel dots on the field, more pop up during the match', () => {
   const server = { clients: new Set(), removeRoom() {}, stats: null };
   const fake = { ws: { readyState: 1 }, name: 'me', token: A, inputs: new InputBuffer(), send() {}, sendBinary() {}, sendRaw() {} };
   const room = new Room(server, 1);
@@ -336,8 +336,46 @@ test('fuel: many small dots on the field, power-ups as before', () => {
   const count = () => room.round.items.filter((it) => it.type === 'fuel').length;
   const atStart = count();
   assert.ok(atStart >= 15, `some fuel dots at the start (${atStart})`);
-  const power = room.round.items.length - atStart;
-  assert.ok(power >= 6 && power <= 10, 'power-ups as before');
+  assert.equal(room.round.items.length, atStart, 'no power-ups any more');
   for (let i = 0; i < TICK_RATE * 10 && room.state === 'playing'; i++) room.step();
   assert.ok(count() >= atStart + 15, `more pop up during the match (${count()})`);
+});
+
+test('skills cost fuel, start on their stamped tick, and a crash drops fuel', () => {
+  const server = { clients: new Set(), removeRoom() {}, stats: null };
+  const sent = [];
+  const fake = {
+    ws: { readyState: 1 }, name: 'me', token: A, inputs: new InputBuffer(), skills: ['boost', 'jump'],
+    send: (o) => sent.push(o), sendBinary() {}, sendRaw: (raw) => { if (typeof raw === 'string') sent.push(JSON.parse(raw)); },
+  };
+  const room = new Room(server, 1);
+  room.addClient(fake);
+  while (room.state !== 'playing') room.step();
+  const r = room.round;
+  while (r.tick <= r.playTick + 5) room.step();
+  const me = fake.player;
+  assert.deepEqual(me.skills, ['boost', 'jump']);
+  assert.equal(me.fuel, 3);
+  const stamp = r.tick + 3;
+  me.wantSkills.push({ k: 'boost', tick: stamp });
+  room.step();
+  assert.ok(!sent.some((m) => m.t === 'skill'), 'waits for its tick');
+  while (r.tick < stamp) room.step();
+  const used = sent.find((m) => m.t === 'skill');
+  assert.ok(used && used.ok);
+  assert.equal(used.start, stamp);
+  assert.equal(me.fuel, 0);
+  assert.equal(me.mods.speed > 1, true);
+  me.wantSkills.push({ k: 'jump', tick: r.tick + 1 });   // no fuel left: refused
+  room.step(); room.step();
+  assert.ok(sent.some((m) => m.t === 'skill' && m.k === 'jump' && !m.ok));
+  me.wantSkills.push({ k: 'rocket', tick: r.tick + 1 }); // not one of my skills: ignored
+  room.step();
+  assert.ok(!sent.some((m) => m.t === 'skill' && m.k === 'rocket'));
+  // a crash drops its fuel plus the extra dots
+  me.fuel = 4;
+  const before = r.items.length;
+  room.kill(me, -1, 5, r.tick);
+  assert.equal(r.items.length, before + 4 + 3);
+  assert.equal(me.fuel, 0);
 });

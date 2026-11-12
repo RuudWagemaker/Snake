@@ -1,4 +1,4 @@
-import { TICK_MS, TICK_RATE, KILLER_ZONE, KILLER_LEFT, COLORS, TRAIL_STYLES, colorLevel, FUEL_PER_ROCKET, MAX_FUEL } from '../shared/constants.js';
+import { TICK_MS, TICK_RATE, KILLER_ZONE, KILLER_LEFT, COLORS, TRAIL_STYLES, colorLevel, MAX_FUEL, SKILLS, SKILL_IDS, SKILL_SLOTS, validSkills } from '../shared/constants.js';
 import { decodeTick } from '../shared/protocol.js';
 import { Net } from './net.js';
 import { Input } from './input.js';
@@ -17,7 +17,7 @@ const ui = {
   deadTitle: $('dead-title'), deadSub: $('dead-sub'),
   endTitle: $('end-title'), ranking: $('ranking'), endSub: $('end-sub'),
   tip: $('tip'), alive: $('alive'), kills: $('kills'), zoneInfo: $('zone-info'), feed: $('feed'), effects: $('effects'),
-  center: $('center-msg'), touchL: $('touch-left'), touchR: $('touch-right'),
+  center: $('center-msg'),
 };
 
 // Build fingerprint the server put into index.html; used to detect a stale page.
@@ -38,17 +38,38 @@ function reloadForNewVersion() {
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const net = new Net();
 const input = new Input(canvas);
-const fireBtn = document.getElementById('fire');
-function fireRocket() {
-  if (mode !== 'game' || !game.active) return;
-  if (game.fire()) {
-    fireBtn.classList.add('bang');
-    setTimeout(() => fireBtn.classList.remove('bang'), 120);
+// ---------------------------------------------------------------- skills
+// Two skills, picked in the menu (saved in localStorage), used with the buttons
+// on the right (touch), Space / Shift (keyboard) or A / B (gamepad).
+let mySkills = ['rocket', 'jump'];
+try { mySkills = validSkills(JSON.parse(localStorage.getItem('cr-skills') || 'null')); } catch {}
+const skillBar = document.getElementById('skillbar');
+const skillBtns = [...skillBar.querySelectorAll('.skill')];
+function useSlot(slot) {
+  if (mode !== 'game' || !game.active || !game.me) return;
+  const btn = skillBtns[slot];
+  if (game.useSkill(game.me.skills[slot])) {
+    btn.classList.add('bang');
+    setTimeout(() => btn.classList.remove('bang'), 140);
+    showSkillBar();
   }
 }
-input.onFire = fireRocket;
-fireBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); fireRocket(); });
-fireBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+input.onSkill = useSlot;
+for (const b of skillBtns) {
+  b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); useSlot(Number(b.dataset.slot)); });
+  b.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+if (isTouch) { skillBar.classList.add('touch'); document.documentElement.classList.add('touch'); }
+
+// The steering stick under the thumb (touch)
+const stickEl = document.getElementById('stick');
+input.onStick = (st) => {
+  if (!st || mode !== 'game' || !game.controlling) { show(stickEl, false); return; }
+  show(stickEl);
+  stickEl.style.transform = `translate(${st.x0}px, ${st.y0}px)`;
+  const dx = st.x - st.x0, dy = st.y - st.y0, d = Math.hypot(dx, dy), k = d > 44 ? 44 / d : 1;
+  stickEl.firstElementChild.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
+};
 const game = new ClientGame(net);
 const renderer = new Renderer(canvas, $('minimap'));
 
@@ -61,7 +82,7 @@ const cam = { x: 0, y: 0, scale: renderer.baseScale };
 // ---------------------------------------------------------------- UI helpers
 
 function show(el, on = true) { el.hidden = !on; }
-function hidePanels() { for (const p of [ui.menu, ui.lobby, ui.dead, ui.end, ui.lb, ui.skin]) show(p, false); }
+function hidePanels() { for (const p of [ui.menu, ui.lobby, ui.dead, ui.end, ui.lb, ui.skin, $('skills')]) show(p, false); }
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -74,10 +95,7 @@ function setMode(m) {
   mode = m;
   input.enabled = m === 'game';
   show(ui.hud, m === 'game');
-  const touchHints = m === 'game' && isTouch;
-  show(ui.touchL, touchHints);
-  show(ui.touchR, touchHints);
-  if (m !== 'game') ui.center.innerHTML = '';
+  if (m !== 'game') { ui.center.innerHTML = ''; show(stickEl, false); }
 }
 
 function toMenu(status = '') {
@@ -301,6 +319,29 @@ $('styles').addEventListener('click', (e) => {
 $('skin-open').addEventListener('click', () => { renderSkin(); $('skin-msg').textContent = 'Level up to unlock more.'; hidePanels(); show(ui.skin); });
 $('skin-close').addEventListener('click', () => toMenu());
 
+// Skills panel: tap a card to pick it; a third pick replaces the oldest one.
+function skillsLine() {
+  $('skills-open').innerHTML = 'Skills: ' + mySkills.map((k) => `${SKILLS[k].icon} ${SKILLS[k].label}`).join(' &middot; ') + ' <span>change</span>';
+}
+function renderSkills() {
+  $('skill-cards').innerHTML = SKILL_IDS.map((k) => {
+    const d = SKILLS[k], on = mySkills.includes(k);
+    return `<button data-k="${k}" class="${on ? 'on' : ''}"><span>${d.icon}</span><b>${d.label}</b><i>${d.cost} fuel</i><small>${d.help}</small></button>`;
+  }).join('');
+  $('skills-msg').textContent = `Picked: ${mySkills.map((k) => SKILLS[k].label).join(' + ')}`;
+}
+$('skill-cards').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b || mySkills.includes(b.dataset.k)) return;
+  mySkills = [...mySkills.slice(1 - SKILL_SLOTS + mySkills.length), b.dataset.k].slice(-SKILL_SLOTS);
+  try { localStorage.setItem('cr-skills', JSON.stringify(mySkills)); } catch {}
+  renderSkills();
+  skillsLine();
+});
+$('skills-open').addEventListener('click', () => { renderSkills(); hidePanels(); show($('skills')); });
+$('skills-close').addEventListener('click', () => toMenu());
+skillsLine();
+
 // ---------------------------------------------------------------- friends' rooms
 // A room is just a short code in the link (?room=abc12). Everyone who opens the
 // link plays in the same room; bots still fill the empty seats.
@@ -397,7 +438,7 @@ function join() {
   ui.lobbySub.textContent = '';
   show(ui.lobbyRoom, false);
   ui.inviteMsg.textContent = '';
-  net.send({ t: 'join', name, build: BUILD, token: TOKEN, room: roomCode, skin });
+  net.send({ t: 'join', name, build: BUILD, token: TOKEN, room: roomCode, skin, skills: mySkills });
   goFullscreen();
   keepAwake();
 }
@@ -453,10 +494,10 @@ function killTag(killer, tick) {
 const TIPS = [
   { at: 2, text: 'Gaps open in every line now and then. You can slip through them!' },
   { at: 9, text: 'The zone is shrinking soon. Stay inside the circle!' },
-  { at: 17, text: 'Green power-ups help you. Red ones hit the players near you.' },
+  { at: 17, text: isTouch ? 'Orange dots are fuel. Spend it on your skills with the buttons on the right.' : 'Orange dots are fuel. Spend it on your skills: Space and Shift.' },
   { at: 27, text: 'Cut others off: make them crash into your line to score kills.' },
   // `first`: when it's the first tip of a match (players who saw the others already)
-  { at: 40, first: 6, text: isTouch ? `Collect the orange fuel dots: ${FUEL_PER_ROCKET} = 1 rocket. Tap \u{1F680} to blast a hole in a line!` : `Collect the orange fuel dots: ${FUEL_PER_ROCKET} = 1 rocket. Press Space to blast a hole in a line!` },
+  { at: 40, first: 6, text: 'A crashed snake drops all its fuel. Go and grab it!' },
 ];
 let tipsSeen = 0;
 try { tipsSeen = Number(localStorage.getItem('cr-tips')) || 0; } catch {}
@@ -480,19 +521,14 @@ let flashUntil = 0;
 let lastBeat = -1, zoneWarned = false;
 game.onEvent = (ev) => {
   if (ev.type === 'pickup') {
-    if (ev.by === game.me) sound.play('pickup');
-    else if (ev.hitsMe && !ev.def.good) { sound.play('hit'); sound.vibrate(60); }
-    if (ev.hitsMe && !ev.def.good) {
-      // an opponent's red power-up hit us: make it impossible to miss
-      ui.center.innerHTML = `<span style="color:#ff6b81;font-size:0.6em">${ev.def.icon} ${ev.def.label.toUpperCase()}!</span><small>from ${esc(ev.by ? ev.by.name : '?')}</small>`;
-      flashUntil = performance.now() + 1300;
-    }
+    if (ev.by === game.me) sound.play('fuel');
     return;
   }
-  if (ev.type === 'rocket') {
-    if (ev.by === game.me) sound.play('launch');
+  if (ev.type === 'skill') {
+    if (ev.mine) { sound.play(ev.k); sound.vibrate(15); }
     return;
   }
+  if (ev.type === 'rocket') return; // our own launch sound plays when we press (skill event)
   if (ev.type === 'hole') {
     const h = ev.hole, me = game.me;
     const near = me && Math.hypot(me.xs[me.n - 1] - h.x, me.ys[me.n - 1] - h.y) < 700;
@@ -633,6 +669,9 @@ net.onJson = (m) => {
     case 'blast':
       if (game.active) game.onBlast(m);
       break;
+    case 'skill':
+      if (game.active) game.onSkill(m);
+      break;
     case 'end':
       if (!game.active) return;
       game.onEnd(m);
@@ -744,17 +783,12 @@ function frame(now) {
     else if (beat === 0 && lastBeat > 0) sound.play('go');
     lastBeat = beat;
   }
-  if (toGo > 0) ui.center.innerHTML = `${Math.ceil(toGo)}<small>${isTouch ? 'hold left / right to steer' : '← → to steer'}</small>`;
+  if (toGo > 0) ui.center.innerHTML = `${Math.ceil(toGo)}<small>${isTouch ? 'drag a thumb to steer' : '← → steer · Space / Shift skills'}</small>`;
   else if (toGo > -0.8) ui.center.textContent = 'GO!';
   else if (now < flashUntil) { /* showing a power-up warning */ }
   else if (ui.center.innerHTML) ui.center.innerHTML = '';
+  if (!game.controlling && !stickEl.hidden) show(stickEl, false);
 
-  // Touch hints
-  if (isTouch) {
-    const t = input.turn;
-    ui.touchL.classList.toggle('on', game.controlling && t < 0);
-    ui.touchR.classList.toggle('on', game.controlling && t > 0);
-  }
 
   if (now - hudAt > 200) {
     hudAt = now;
@@ -764,24 +798,32 @@ function frame(now) {
   }
 }
 
-let fuelShown = '';
-function showFuel() {
-  const fuel = game.me && game.controlling ? game.me.fuel : -1;
-  const key = `${fuel}`;
-  if (key === fuelShown) return;
-  fuelShown = key;
+/** Fuel pill and the two skill buttons (ready = enough fuel; a bar while one runs). */
+let skillShown = '';
+function showSkillBar() {
+  const me = game.me && game.controlling ? game.me : null;
+  const now = performance.now();
+  const fx = me ? game.myEffects(now) : [];
+  const key = me ? `${me.fuel}|${me.skills}|${skillBtns.map((b, i) => game.canUse(me.skills[i])).join()}|${fx.map((e) => e.type + Math.ceil(e.left * 5)).join()}` : '-';
+  if (key === skillShown) return;
+  skillShown = key;
   const el = $('fuel');
-  show(el, fuel >= 0);
-  show(fireBtn, fuel >= 0 && isTouch);
-  if (fuel < 0) return;
-  const rockets = Math.floor(fuel / FUEL_PER_ROCKET), cans = fuel % FUEL_PER_ROCKET;
-  const full = fuel >= MAX_FUEL;
-  const bar = full ? '' : ` <span class="can">${'\u25AE'.repeat(cans)}<s>${'\u25AE'.repeat(FUEL_PER_ROCKET - cans)}</s></span>`;
-  el.innerHTML = `<span class="${rockets ? 'ok' : ''}">\u{1F680} ${rockets}</span>${bar}`;
-  el.title = `Fuel: ${FUEL_PER_ROCKET} dots make a rocket`;
-  fireBtn.classList.toggle('ready', rockets > 0);
-  $('fire-n').textContent = rockets > 1 ? `\u00D7${rockets}` : '';
-  $('fire-fuel').style.height = `${Math.round((100 * cans) / FUEL_PER_ROCKET)}%`;
+  show(el, !!me);
+  show(skillBar, !!me);
+  if (!me) return;
+  el.innerHTML = `<span class="ok">\u26FD ${me.fuel}</span><span class="can">/${MAX_FUEL}</span>`;
+  el.title = 'Fuel: collect the orange dots, spend it on your skills';
+  skillBtns.forEach((b, i) => {
+    const k = me.skills[i], def = SKILLS[k];
+    const on = def.effect ? fx.find((e) => e.type === def.effect && !e.pending) : null;
+    b.querySelector('span').textContent = def.icon;
+    b.querySelector('b').textContent = def.cost;
+    b.title = `${def.label} (${def.cost} fuel): ${def.help}`;
+    b.classList.toggle('ready', game.canUse(k));
+    b.classList.toggle('on', !!on);
+    // fill: how much of the cost we have, or how long the skill still runs
+    b.querySelector('i').style.height = `${Math.round(100 * (on ? on.left / on.total : Math.min(1, me.fuel / def.cost)))}%`;
+  });
 }
 
 function updateHud(zone, serverTick) {
@@ -795,7 +837,7 @@ function updateHud(zone, serverTick) {
   const col = ms > 150 ? '#ff6b6b' : ms > 80 ? '#ffd43b' : '#69db7c';
   const rtt = ms ? ` · <span style="color:${col}">${ms} ms</span>` : '';
   ui.kills.innerHTML = `⚔ ${k} kill${k === 1 ? '' : 's'}${rtt}`;
-  showFuel();
+  showSkillBar();
   let txt = '', warn = false;
   if (serverTick < game.playTick) txt = 'Get ready';
   else if (game.ended) txt = 'Round over';
