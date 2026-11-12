@@ -444,7 +444,7 @@ const TIPS = [
   { at: 17, text: 'Green power-ups help you. Red ones hit the players near you.' },
   { at: 27, text: 'Cut others off: make them crash into your line to score kills.' },
   // `first`: when it's the first tip of a match (players who saw the others already)
-  { at: 40, first: 6, text: isTouch ? 'Collect \u26FD fuel: 3 cans = 1 rocket. Tap \u{1F680} to blast a hole in a line!' : 'Collect \u26FD fuel: 3 cans = 1 rocket. Press Space to blast a hole in a line!' },
+  { at: 40, first: 6, text: isTouch ? `Collect the orange fuel dots: ${FUEL_PER_ROCKET} = 1 rocket. Tap \u{1F680} to blast a hole in a line!` : `Collect the orange fuel dots: ${FUEL_PER_ROCKET} = 1 rocket. Press Space to blast a hole in a line!` },
 ];
 let tipsSeen = 0;
 try { tipsSeen = Number(localStorage.getItem('cr-tips')) || 0; } catch {}
@@ -766,7 +766,7 @@ function showFuel() {
   const full = fuel >= MAX_FUEL;
   const bar = full ? '' : ` <span class="can">${'\u25AE'.repeat(cans)}<s>${'\u25AE'.repeat(FUEL_PER_ROCKET - cans)}</s></span>`;
   el.innerHTML = `<span class="${rockets ? 'ok' : ''}">\u{1F680} ${rockets}</span>${bar}`;
-  el.title = 'Fuel: 3 cans make a rocket';
+  el.title = `Fuel: ${FUEL_PER_ROCKET} dots make a rocket`;
   fireBtn.classList.toggle('ready', rockets > 0);
   $('fire-n').textContent = rockets > 1 ? `\u00D7${rockets}` : '';
   $('fire-fuel').style.height = `${Math.round((100 * cans) / FUEL_PER_ROCKET)}%`;

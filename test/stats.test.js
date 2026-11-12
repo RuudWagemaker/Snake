@@ -9,7 +9,7 @@ import { cleanName } from '../server/names.js';
 import { Room } from '../server/room.js';
 import { InputBuffer } from '../server/inputs.js';
 import { startServer } from '../server/index.js';
-import { TICK_RATE } from '../public/shared/constants.js';
+import { TICK_RATE, FUEL_PER_ROCKET } from '../public/shared/constants.js';
 
 const A = 'a'.repeat(32), B = 'b'.repeat(32);
 
@@ -308,7 +308,7 @@ test('rockets: fuel, firing and a hole in a line', () => {
   me.fireTick = r.tick + 1;
   room.step();
   assert.ok(!sent.some((m) => m.t === 'rocket'));
-  me.fuel = 3;
+  me.fuel = FUEL_PER_ROCKET;
   me.wantFire = true;
   me.fireTick = r.tick - 5;      // stamped a little in the past (lag): starts where it was aimed
   const aimed = { ...me.hist[(r.tick - 5) % 32] };
@@ -325,4 +325,16 @@ test('rockets: fuel, firing and a hole in a line', () => {
   assert.equal(me.picks.blast, 1);
   assert.notEqual(r.grid.hit(wx, wy, 6, -1, 0, blast.at - 1), -2);
   assert.equal(r.grid.hit(wx, wy, 6, -1, 0, blast.at), -2);
+});
+
+test('fuel: many small dots on the field, power-ups as before', () => {
+  const server = { clients: new Set(), removeRoom() {}, stats: null };
+  const fake = { ws: { readyState: 1 }, name: 'me', token: A, inputs: new InputBuffer(), send() {}, sendBinary() {}, sendRaw() {} };
+  const room = new Room(server, 1);
+  room.addClient(fake);
+  while (room.state !== 'playing') room.step();
+  const items = room.round.items;
+  const fuel = items.filter((it) => it.type === 'fuel').length;
+  assert.ok(fuel >= 50, `lots of fuel dots (${fuel})`);
+  assert.ok(items.length - fuel >= 6 && items.length - fuel <= 10, 'power-ups as before');
 });

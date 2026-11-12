@@ -23,7 +23,7 @@ async function main() {
   const statsDir = mkdtempSync(path.join(tmpdir(), 'cr-ui-'));
   process.env.STATS_FILE = path.join(statsDir, 'stats.json');
   process.env.SIM_ITEMS = process.env.SIM_ITEMS || '40'; // plenty of power-ups to look at
-  process.env.SIM_FUEL = process.env.SIM_FUEL || '6';    // start with 2 rockets, to try them
+  process.env.SIM_FUEL = process.env.SIM_FUEL || '10';    // start with 2 rockets, to try them
   const { startServer } = await import(path.resolve(__dirname, '../server/index.js'));
   const srv = await startServer({ port: 0, statsFile: process.env.STATS_FILE });
   const url = `http://localhost:${srv.port}/`;

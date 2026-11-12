@@ -2,7 +2,7 @@ import {
   TICK_RATE, MIN_PLAYERS, MAX_PLAYERS, LOBBY_SECONDS, NEXT_ROUND_LOBBY_SECONDS, PRIVATE_LOBBY_SECONDS,
   COUNTDOWN_SECONDS, END_SECONDS, KILLER_LEFT, COLORS, fieldRadius,
   POWERUPS, POWERUP_TYPES, EFFECT_DELAY, ITEM_RADIUS, OTHERS_RANGE, LINE_WIDTH,
-  FUEL_SHARE, FUEL_PER_ROCKET, MAX_FUEL, ROCKET_SPEED, ROCKET_RANGE, ROCKET_WIDTH, BLAST_R, DT, FIRE_LATE_TICKS,
+  FUEL_RADIUS, fuelTarget, FUEL_PER_ROCKET, MAX_FUEL, ROCKET_SPEED, ROCKET_RANGE, ROCKET_WIDTH, BLAST_R, DT, FIRE_LATE_TICKS,
 } from '../public/shared/constants.js';
 import {
   mulberry32, stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt, hitDist,
@@ -202,7 +202,7 @@ export class Room {
         turn: 0,
         kills: 0,
         picks: {},              // power-ups picked up, for daily missions
-        // fuel cans (FUEL_PER_ROCKET make a rocket). SIM_FUEL: dev/testing start amount
+        // fuel dots (FUEL_PER_ROCKET make a rocket). SIM_FUEL: dev/testing start amount
         fuel: Math.min(MAX_FUEL, Number(process.env.SIM_FUEL) || 0),
         wantFire: false,        // the player pressed fire: launched at fireTick
         fireTick: 0,
@@ -243,12 +243,14 @@ export class Room {
       rockets: [],        // flying rockets: {id, by, x, y, a, dist}
       nextRocketId: 1,
       // SIM_ITEMS: dev/testing override for the number of power-ups on the field
-      itemTarget: Number(process.env.SIM_ITEMS) || Math.max(8, Math.min(24, Math.round(n * 1.3))),
+      itemTarget: Number(process.env.SIM_ITEMS) || Math.max(6, Math.min(18, n)),
+      fuelTarget: fuelTarget(n),
       rng: mulberry32(seed ^ 0x51ed27),
     };
     this.state = 'playing';
     const zone0 = zoneAt(this.round.plan, 0);
-    for (let i = 0; i < this.round.itemTarget; i++) this.spawnItem(zone0);
+    for (let i = 0; i < this.round.itemTarget; i++) this.spawnItem(zone0, false);
+    for (let i = 0; i < this.round.fuelTarget; i++) this.spawnItem(zone0, true);
 
     const info = players.map((p) => ({ id: p.id, name: p.name, color: p.color, style: p.style, bot: p.bot, x: p.x, y: p.y, a: p.a, fuel: p.fuel || undefined }));
     for (const c of this.clients) {
@@ -417,17 +419,18 @@ export class Room {
 
   // ---- power-ups -----------------------------------------------------------
 
-  spawnItem(zone) {
+  /** A power-up, or (fuel = true) a fuel dot. */
+  spawnItem(zone, fuel) {
     const r = this.round;
     for (let attempt = 0; attempt < 20; attempt++) {
       const ang = r.rng() * Math.PI * 2;
       const d = Math.sqrt(r.rng()) * zone.r * 0.85;
       const x = zone.x + Math.cos(ang) * d, y = zone.y + Math.sin(ang) * d;
       // not on a line, not right in front of anyone, not on another item
-      if (r.grid.hit(x, y, ITEM_RADIUS * 3, -1, 0) !== -2) continue;
+      if (r.grid.hit(x, y, (fuel ? FUEL_RADIUS : ITEM_RADIUS) * 3, -1, 0) !== -2) continue;
       if (r.players.some((p) => p.alive && Math.hypot(p.x - x, p.y - y) < 120)) continue;
-      if (r.items.some((it) => Math.hypot(it.x - x, it.y - y) < 150)) continue;
-      const type = r.rng() < FUEL_SHARE ? 'fuel' : POWERUP_TYPES[Math.floor(r.rng() * POWERUP_TYPES.length)];
+      if (r.items.some((it) => Math.hypot(it.x - x, it.y - y) < (fuel || it.type === 'fuel' ? 50 : 150))) continue;
+      const type = fuel ? 'fuel' : POWERUP_TYPES[Math.floor(r.rng() * POWERUP_TYPES.length)];
       const item = { id: r.nextItemId++, type, x: Math.round(x), y: Math.round(y) };
       r.items.push(item);
       return item;
@@ -444,12 +447,22 @@ export class Room {
       if (!inside) rem.push(it.id);
       return inside;
     });
-    // fewer items as the field shrinks
-    const target = Math.min(r.itemTarget, Math.max(1, Math.round(r.itemTarget * zone.r / r.R0)));
+    // fewer items as the field shrinks; fuel dots are topped up faster
+    const k = zone.r / r.R0;
+    const target = Math.min(r.itemTarget, Math.max(1, Math.round(r.itemTarget * k)));
+    const fuelGoal = Math.max(2, Math.round(r.fuelTarget * k));
+    let power = 0, fuel = 0;
+    for (const it of r.items) if (it.type === 'fuel') fuel++; else power++;
     const add = [];
-    if (r.items.length < target && zone.r > 150) {
-      const it = this.spawnItem(zone);
-      if (it) add.push(it);
+    if (zone.r > 150) {
+      if (power < target) {
+        const it = this.spawnItem(zone, false);
+        if (it) add.push(it);
+      }
+      for (let i = 0; i < 3 && fuel + i < fuelGoal; i++) {
+        const it = this.spawnItem(zone, true);
+        if (it) add.push(it);
+      }
     }
     r.effects = r.effects.filter((e) => e.end > t);
     if (add.length || rem.length) this.broadcast({ t: 'items', add, rem });
@@ -461,7 +474,7 @@ export class Room {
       const it = r.items[i];
       const fuel = it.type === 'fuel';
       const p = r.players.find((q) => q.alive && !deaths.has(q) && (!fuel || q.fuel < MAX_FUEL) &&
-        Math.hypot(q.x - it.x, q.y - it.y) < ITEM_RADIUS + q.width / 2);
+        Math.hypot(q.x - it.x, q.y - it.y) < (fuel ? FUEL_RADIUS : ITEM_RADIUS) + q.width / 2);
       if (!p) continue;
       r.items.splice(i, 1);
       p.picks[it.type] = (p.picks[it.type] || 0) + 1;

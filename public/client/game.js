@@ -17,7 +17,7 @@
 //    glide in. While spectating they're shown slightly in the past and
 //    interpolated (smoothest). Either way, if updates stop for a moment they
 //    keep moving instead of freezing.
-import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, ITEM_RADIUS, POWERUPS, FUEL, FUEL_PER_ROCKET, MAX_FUEL, EFFECT_DELAY } from '../shared/constants.js';
+import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, ITEM_RADIUS, FUEL_RADIUS, POWERUPS, FUEL, FUEL_PER_ROCKET, MAX_FUEL, EFFECT_DELAY } from '../shared/constants.js';
 import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt, distSqPointSeg } from '../shared/sim.js';
 import { FLAG_GAP, FLAG_DIED, FLAG_CUT, encodeInput, encodeInputs } from '../shared/protocol.js';
 
@@ -59,7 +59,7 @@ export class Snake {
     this.killer = null;
     this.place = 0;
     this.kills = 0;
-    this.fuel = info.fuel || 0; // fuel cans (FUEL_PER_ROCKET make a rocket)
+    this.fuel = info.fuel || 0; // fuel dots (FUEL_PER_ROCKET make a rocket)
     this.chunks = [];      // cached Path2D pieces, owned by the renderer
     this.burstAt = 0;      // when the death effect started (ms)
     this.vox = 0;          // visual offset after extrapolation was corrected (glides to 0)
@@ -428,7 +428,7 @@ export class ClientGame {
     const def = m.type === 'fuel' ? FUEL : POWERUPS[m.type];
     const by = this.snakes.get(m.by);
     if (m.type === 'fuel' && by) by.fuel = m.fuel;
-    this.popups.push({ x: m.x, y: m.y, text: (def.good ? '+' : '') + def.label.toUpperCase(), good: def.good, fuel: m.type === 'fuel', at: performance.now() });
+    if (m.type !== 'fuel' || m.by === this.myId) this.popups.push({ x: m.x, y: m.y, text: (def.good ? '+' : '') + def.label.toUpperCase(), good: def.good, fuel: m.type === 'fuel', at: performance.now() });
     this.onEvent({ type: 'pickup', msg: m, def, by, hitsMe: m.targets.includes(this.myId) });
   }
 
@@ -533,7 +533,7 @@ export class ClientGame {
         // Hide a power-up we're about to collect (the server confirms it shortly).
         for (const it of this.items.values()) {
           if (it.type === 'fuel' && this.me.fuel >= MAX_FUEL) continue; // full: the server leaves it
-          if (Math.hypot(it.x - p.x, it.y - p.y) < ITEM_RADIUS + m.width / 2) it.localPick = performance.now();
+          if (Math.hypot(it.x - p.x, it.y - p.y) < (it.type === 'fuel' ? FUEL_RADIUS : ITEM_RADIUS) + m.width / 2) it.localPick = performance.now();
         }
       }
       this.path.push({ x: p.x, y: p.y, a: p.a, t: tt, w: m.width, solid: !m.ghost && (tt <= this.playTick || !this.myGaps.isGap(tt - this.playTick)) });

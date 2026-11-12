@@ -1,4 +1,4 @@
-import { LINE_WIDTH, MAX_WIDTH, ITEM_RADIUS, POWERUPS, FUEL, ROCKET_SPEED, TICK_RATE } from '../shared/constants.js';
+import { LINE_WIDTH, MAX_WIDTH, ITEM_RADIUS, FUEL_RADIUS, POWERUPS, FUEL, ROCKET_SPEED, TICK_RATE } from '../shared/constants.js';
 import { FLAG_GAP, FLAG_CUT } from '../shared/protocol.js';
 import { CHUNK } from './game.js';
 
@@ -335,9 +335,19 @@ export class Renderer {
     for (const it of game.items.values()) {
       if (it.x < v.x0 - 30 || it.x > v.x1 + 30 || it.y < v.y0 - 30 || it.y > v.y1 + 30) continue;
       if (it.localPick && now - it.localPick < 800) continue; // we're picking it up
-      const fuel = it.type === 'fuel';
-      const def = fuel ? FUEL : POWERUPS[it.type];
-      const col = fuel ? FUEL_COL : def.good ? GOOD : BAD;
+      if (it.type === 'fuel') {
+        // small glowing dot
+        const tw = 1 + Math.sin(now / 300 + it.id) * 0.15;
+        ctx.globalAlpha = 0.4;
+        ctx.fillStyle = FUEL_COL;
+        ctx.beginPath(); ctx.arc(it.x, it.y, FUEL_RADIUS * 1.8 * tw, 0, TAU); ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#ffd8a8';
+        ctx.beginPath(); ctx.arc(it.x, it.y, FUEL_RADIUS * 0.8, 0, TAU); ctx.fill();
+        continue;
+      }
+      const def = POWERUPS[it.type];
+      const col = def.good ? GOOD : BAD;
       ctx.globalAlpha = 0.25;
       ctx.fillStyle = col;
       ctx.beginPath(); ctx.arc(it.x, it.y, ITEM_RADIUS * 1.6 * pulse, 0, TAU); ctx.fill();
