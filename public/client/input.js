@@ -66,7 +66,7 @@ export class Input {
     // thumb is lifted and put down again).
     const opts = { passive: false };
     surface.addEventListener('touchstart', (e) => {
-      e.preventDefault();
+      if (e.cancelable) e.preventDefault();
       if (!this.enabled) return;
       for (const t of e.changedTouches) {
         // a new stick where the thumb landed (the newest thumb steers)
@@ -76,7 +76,7 @@ export class Input {
       this.onStick?.(this.stick);
     }, opts);
     surface.addEventListener('touchmove', (e) => {
-      e.preventDefault();
+      if (e.cancelable) e.preventDefault();
       for (const t of e.changedTouches) {
         let st = this.sticks.find((s) => s.id === t.identifier);
         if (!st) {
