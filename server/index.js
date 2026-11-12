@@ -71,12 +71,33 @@ b{color:#51cf66}</style></head><body>
 </body></html>`;
 }
 
+/**
+ * AdSense (optional, ADSENSE_CLIENT=ca-pub-..., ADSENSE_SLOT=...): Google's script
+ * in <head>, and the ids for the client's ad space on the "starting soon" screen.
+ */
+export function adsConfig(client, slot) {
+  if (!/^ca-pub-\d{10,20}$/.test(client || '')) return null;
+  return { client, slot: /^\d{5,20}$/.test(slot || '') ? slot : '' };
+}
+function adsHead(ads) {
+  if (!ads) return '';
+  return `<meta name="google-adsense-account" content="${ads.client}">\n  <meta name="ads" content="${ads.client}|${ads.slot}">\n` +
+    `  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ads.client}" crossorigin="anonymous"></script>`;
+}
+
 async function serveStatic(req, res, ctx = {}) {
   let urlPath;
   try {
     urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   } catch {
     res.writeHead(400).end();
+    return;
+  }
+  if (urlPath === '/ads.txt') {
+    // Google AdSense asks for this file to prove the site's ads are ours
+    const pub = ctx.ads && ctx.ads.client ? ctx.ads.client.replace(/^ca-/, '') : null;
+    if (pub) res.writeHead(200, { 'content-type': 'text/plain' }).end(`google.com, ${pub}, DIRECT, f08c47fec0942fa0\n`);
+    else res.writeHead(404, { 'content-type': 'text/plain' }).end('not found');
     return;
   }
   if (urlPath === '/admin') {
@@ -103,7 +124,7 @@ async function serveStatic(req, res, ctx = {}) {
     let data = await readFile(file);
     if (file.endsWith('index.html')) {
       const canonical = /^[a-z0-9.-]+$/.test(ctx.canonicalHost || '') ? ctx.canonicalHost : '';
-      data = data.toString().replaceAll('%BUILD%', BUILD).replaceAll('%CANONICAL%', canonical);
+      data = data.toString().replaceAll('%BUILD%', BUILD).replaceAll('%CANONICAL%', canonical).replace('<!--%ADS%-->', adsHead(ctx.ads));
     }
     res.writeHead(200, {
       'content-type': TYPES[path.extname(file)] || 'application/octet-stream',
@@ -115,11 +136,11 @@ async function serveStatic(req, res, ctx = {}) {
   }
 }
 
-export async function startServer({ port = 3000, host, statsFile = null, adminKey = null, googleClientId = null, verifyGoogle, canonicalHost = null } = {}) {
+export async function startServer({ port = 3000, host, statsFile = null, adminKey = null, googleClientId = null, verifyGoogle, canonicalHost = null, ads = null } = {}) {
   await initRtc();
   const stats = new Stats(statsFile);
   const game = new GameServer(BUILD, stats, { googleClientId, ...(verifyGoogle ? { verifyGoogle } : {}) });
-  const server = http.createServer((req, res) => serveStatic(req, res, { stats, game, adminKey, canonicalHost }));
+  const server = http.createServer((req, res) => serveStatic(req, res, { stats, game, adminKey, canonicalHost, ads }));
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096, perMessageDeflate: false });
   wss.on('connection', (ws) => game.onConnection(ws));
   game.start();
@@ -150,7 +171,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     googleClientId: process.env.GOOGLE_CLIENT_ID || null,
     // CANONICAL_HOST: the game's main address (e.g. lineclash.com). Pages opened on any
     // other address move there, taking the player's saved progress along.
-    canonicalHost: process.env.CANONICAL_HOST || null }).then(({ port, game }) => {
+    canonicalHost: process.env.CANONICAL_HOST || null,
+    // ADSENSE_CLIENT / ADSENSE_SLOT: Google AdSense publisher id and ad unit (unset = no ads)
+    ads: adsConfig(process.env.ADSENSE_CLIENT, process.env.ADSENSE_SLOT) }).then(({ port, game }) => {
     console.log(`Line Clash (build ${BUILD}) running on http://localhost:${port}` +
       (statsFile ? `, stats in ${statsFile}` : ', stats in memory only (set STATS_FILE to keep them)'));
     // Save the stats before a restart (docker stop sends SIGTERM).

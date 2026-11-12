@@ -38,6 +38,19 @@ function reloadForNewVersion() {
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const net = new Net();
 const input = new Input(canvas);
+// ---------------------------------------------------------------- ads
+// Only when the server is set up for AdSense (a <meta name="ads"> tag): one ad on
+// the "starting soon" screen. A new ad element each time; Google fills it.
+const adCfg = (document.querySelector('meta[name="ads"]')?.content || '').split('|');
+function showLobbyAd() {
+  const box = document.getElementById('ad-lobby');
+  const [client, slot] = adCfg;
+  if (!client || !slot || !window.adsbygoogle) { show(box, false); return; }
+  box.innerHTML = `<ins class="adsbygoogle" style="display:block" data-ad-client="${client}" data-ad-slot="${slot}" data-ad-format="horizontal" data-full-width-responsive="true"></ins>`;
+  show(box);
+  try { (window.adsbygoogle = window.adsbygoogle || []).push({}); } catch {}
+}
+
 // ---------------------------------------------------------------- skills
 // Two skills, picked in the menu (saved in localStorage), used with the buttons
 // on the right (touch), Space / Shift (keyboard) or A / B (gamepad).
@@ -597,6 +610,7 @@ net.onJson = (m) => {
         ui.endSub.textContent = `Next round in ${m.startsIn}s`;
         return;
       }
+      if (mode !== 'lobby') showLobbyAd(); // a fresh ad each time the waiting screen opens
       hidePanels();
       setMode('lobby');
       game.active = false;

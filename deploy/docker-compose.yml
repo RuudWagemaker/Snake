@@ -12,6 +12,8 @@ services:
       RTC_PUBLIC_IP: ${RTC_PUBLIC_IP:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-} # "Sign in with Google" (unset = off)
       CANONICAL_HOST: ${CANONICAL_HOST:-}  # main address; other addresses move players there
+      ADSENSE_CLIENT: ${ADSENSE_CLIENT:-}  # Google AdSense publisher id (ca-pub-...); unset = no ads
+      ADSENSE_SLOT: ${ADSENSE_SLOT:-}      # ...and the ad unit id for the "starting soon" screen
       ADMIN_KEY: ${ADMIN_KEY:-}     # password for /admin (usage numbers); set in deploy/.env
     volumes:
       - game_data:/data            # player profiles and leaderboards (survives redeploys)

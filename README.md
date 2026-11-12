@@ -181,6 +181,7 @@ visitors.
 | `STATS_FILE` | JSON file for player profiles and leaderboards (unset: memory only) |
 | `GOOGLE_CLIENT_ID` | OAuth client id (Web) for "Sign in with Google"; authorized JavaScript origin = the game's URL (unset: guests only) |
 | `CANONICAL_HOST` | Main address (e.g. `lineclash.com`). Pages on other addresses (www, the old sslip.io one) move there and carry the player's saved progress along. `DOMAIN` can list several addresses: `lineclash.com, www.lineclash.com, old.example` |
+| `ADSENSE_CLIENT`, `ADSENSE_SLOT` | Google AdSense publisher id (`ca-pub-…`) and ad unit id: one ad on the "starting soon" screen, plus `/ads.txt` (unset: no ads) |
 | `ADMIN_KEY` | Password for the private usage page `/admin?key=…` (unset: page off) |
 | `RTC_PUBLIC_IP` | Public IP to announce, if the server's network card has a private IP (1:1 NAT) |
 

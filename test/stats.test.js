@@ -436,3 +436,26 @@ test('a rocket fired right before a line saves you: the hole is there in time', 
     assert.ok(me.alive, `survived a line ${dist} units ahead`);
   }
 });
+
+test('ads: only with an AdSense id; ads.txt and the script in the page', { timeout: 10000 }, async () => {
+  const { adsConfig } = await import('../server/index.js');
+  assert.equal(adsConfig('', ''), null);
+  assert.equal(adsConfig('ca-pub-123', ''), null, 'too short');
+  const off = await startServer({ port: 0 });
+  try {
+    assert.equal((await fetch(`http://localhost:${off.port}/ads.txt`)).status, 404);
+    assert.doesNotMatch(await (await fetch(`http://localhost:${off.port}/`)).text(), /adsbygoogle/);
+  } finally {
+    await off.close();
+  }
+  const on = await startServer({ port: 0, ads: adsConfig('ca-pub-1234567890123456', '9876543210') });
+  try {
+    assert.equal(await (await fetch(`http://localhost:${on.port}/ads.txt`)).text(), 'google.com, pub-1234567890123456, DIRECT, f08c47fec0942fa0\n');
+    const html = await (await fetch(`http://localhost:${on.port}/`)).text();
+    assert.match(html, /adsbygoogle\.js\?client=ca-pub-1234567890123456/);
+    assert.match(html, /<meta name="ads" content="ca-pub-1234567890123456\|9876543210">/);
+    assert.equal((await fetch(`http://localhost:${on.port}/privacy.html`)).status, 200);
+  } finally {
+    await on.close();
+  }
+});

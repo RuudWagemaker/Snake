@@ -108,6 +108,9 @@ button.slim { font-size: 16px; padding: 11px; font-weight: 700; }
 #menu .tag, .panel .small, #me { text-wrap: balance; }
 .howto b { color: var(--text); font-weight: 600; }
 .nw { white-space: nowrap; }
+.ad { margin-top: 12px; min-height: 60px; max-width: 100%; overflow: hidden; }
+#lobby:has(.ad:not([hidden])) { width: min(92vw, 400px); }
+.foot { display: inline-block; margin-top: 6px; color: var(--muted); }
 .touch-only { display: none; }
 html.touch .touch-only { display: block; }
 html.touch .no-touch { display: none; }
