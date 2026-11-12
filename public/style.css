@@ -157,7 +157,9 @@ html.touch .no-touch { display: none; }
 .skill.on { border-color: #51cf66; }
 .skill.on i { display: block; background: rgba(81,207,102,.45); }
 .skill.bang { transform: scale(.9); }
-.pill.fuel .ok { color: #ffa94d; }
+.pill.fuel .ok { color: #ffa94d; display: inline-block; min-width: 2.6em; }
+.pill.fuel .fbar { display: inline-block; vertical-align: middle; width: 70px; height: 8px; margin-left: 4px; border-radius: 4px; background: #263049; overflow: hidden; }
+.pill.fuel .fbar i { display: block; height: 100%; background: linear-gradient(90deg, #ff922b, #ffd43b); }
 .pill.fuel .can { color: #ff922b; letter-spacing: 1px; }
 .pill.fuel .can s { color: #3a4560; text-decoration: none; }
 #net {

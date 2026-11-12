@@ -180,7 +180,7 @@ class Client {
         const p = this.player;
         if (!r || !p || !Object.hasOwn(SKILLS, msg.k)) break;
         if (!p.alive || !p.skills.includes(msg.k) || p.wantSkills.length >= 4) {
-          this.send({ t: 'skill', by: p.id, k: msg.k, ok: false, fuel: p.fuel }); // so the client undoes it
+          this.send({ t: 'skill', by: p.id, k: msg.k, ok: false, fuel: Math.round(p.fuel * 1000) / 1000, ft: r.tick }); // so the client undoes it
           break;
         }
         const t = Number.isInteger(msg.tick) ? msg.tick : r.tick + 1;

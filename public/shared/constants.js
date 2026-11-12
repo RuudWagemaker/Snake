@@ -68,6 +68,7 @@ export const fuelTarget = (n) => Math.max(40, Math.min(120, n * 6)); // dots on 
 export const FUEL_PER_ROCKET = 5;
 export const MAX_FUEL = 10;
 export const START_FUEL = 3;              // enough for one small skill right away
+export const FUEL_REGEN = 0.25;           // fuel per second that refills by itself (a full tank in 40 s)
 export const DEATH_DROP_EXTRA = 3;        // a crashed snake drops its fuel plus this many dots
 
 // Skills: each player picks 2 in the menu and spends fuel to use them in a match.

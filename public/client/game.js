@@ -17,7 +17,7 @@
 //    glide in. While spectating they're shown slightly in the past and
 //    interpolated (smoothest). Either way, if updates stop for a moment they
 //    keep moving instead of freezing.
-import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, FUEL_RADIUS, FUEL, FUEL_PER_ROCKET, MAX_FUEL, EFFECT_DELAY, ROCKET_RANGE, ROCKET_SPEED, ROCKET_WIDTH, SKILLS, EFFECT_INFO, DEFAULT_SKILLS } from '../shared/constants.js';
+import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, FUEL_RADIUS, FUEL, FUEL_PER_ROCKET, MAX_FUEL, FUEL_REGEN, EFFECT_DELAY, ROCKET_RANGE, ROCKET_SPEED, ROCKET_WIDTH, SKILLS, EFFECT_INFO, DEFAULT_SKILLS } from '../shared/constants.js';
 import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt, distSqPointSeg } from '../shared/sim.js';
 import { FLAG_GAP, FLAG_DIED, FLAG_CUT, encodeInput, encodeInputs } from '../shared/protocol.js';
 
@@ -59,7 +59,8 @@ export class Snake {
     this.killer = null;
     this.place = 0;
     this.kills = 0;
-    this.fuel = info.fuel || 0; // fuel dots, spent on skills
+    this.fuelV = info.fuel || 0;  // fuel (fractional) as of tick fuelT; it refills by itself (ClientGame.fuelOf)
+    this.fuelT = info.ft || 0;
     this.skills = info.skills || DEFAULT_SKILLS; // the 2 skills this snake has
     this.chunks = [];      // cached Path2D pieces, owned by the renderer
     this.burstAt = 0;      // when the death effect started (ms)
@@ -157,7 +158,6 @@ export class ClientGame {
     this.holes = [];          // rocket holes {x, y, r, at, shown}: drawn once the server reaches `at`
     this.lastFireAt = 0;
     this.skillAt = {};
-    this.serverFuel = this.me ? this.me.fuel : 0;
     this.pendingCost = 0;     // fuel of skills sent that the server hasn't answered yet
     this.tmpMods = {};
 
@@ -363,7 +363,7 @@ export class ClientGame {
   /** Can we use skill `k` right now? */
   canUse(k) {
     const def = SKILLS[k];
-    if (!def || !this.controlling || !this.me || !this.me.skills.includes(k) || this.me.fuel < def.cost) return false;
+    if (!def || !this.controlling || !this.me || !this.me.skills.includes(k) || this.myFuel < def.cost) return false;
     if (this.lastTarget === null || this.lastTarget <= this.playTick) return false; // countdown
     if (def.effect) {
       // not while the same one is still running
@@ -394,13 +394,24 @@ export class ClientGame {
 
   // Our fuel = the server's amount minus skills it hasn't answered yet, so a
   // pickup message in between doesn't make a used skill look ready again.
-  spend(cost) { this.pendingCost += cost; this.syncFuel(); }
-  settled(cost) { this.pendingCost = Math.max(0, this.pendingCost - cost); this.syncFuel(); }
-  syncFuel() { if (this.me) this.me.fuel = Math.max(0, this.serverFuel - this.pendingCost); }
-  setFuel(s, fuel) {
-    if (!s) return;
-    if (s === this.me) { this.serverFuel = fuel; this.syncFuel(); } else s.fuel = fuel;
+  spend(cost) { this.pendingCost += cost; }
+  settled(cost) { this.pendingCost = Math.max(0, this.pendingCost - cost); }
+  /** The server's fuel for a snake on tick `ft` (it refills by itself from there). */
+  setFuel(s, fuel, ft) {
+    if (!s || typeof fuel !== 'number') return;
+    s.fuelV = fuel;
+    s.fuelT = ft ?? this.latestTick;
   }
+  /** Fuel of a snake now (our own: at the tick we show it at, minus skills not answered yet). */
+  fuelOf(s) {
+    if (!s) return 0;
+    const mine = s === this.me;
+    const tick = mine && this.controlling && this.lastTarget !== null ? this.lastTarget : this.latestTick;
+    const ticks = Math.max(0, tick - Math.max(s.fuelT, this.playTick));
+    const v = Math.min(MAX_FUEL, s.fuelV + (FUEL_REGEN / 30) * ticks);
+    return mine ? Math.max(0, v - this.pendingCost) : v;
+  }
+  get myFuel() { return this.fuelOf(this.me); }
 
   /** The server used (or refused) a skill. */
   onSkill(m) {
@@ -412,7 +423,7 @@ export class ClientGame {
       if (!m.ok && m.k === 'rocket') for (const [id, rk] of this.rockets) if (rk.local) { this.rockets.delete(id); break; }
       this.pendingCost = Math.max(0, this.pendingCost - SKILLS[m.k].cost);
     }
-    this.setFuel(s, m.fuel);
+    this.setFuel(s, m.fuel, m.ft);
     if (m.ok && m.k !== 'rocket') {
       this.effects.push({ type: SKILLS[m.k].effect, start: m.start, end: m.end, targets: [m.by] });
       if (m.by !== this.myId) this.onEvent({ type: 'skill', k: m.k, by: s, mine: false });
@@ -440,7 +451,7 @@ export class ClientGame {
   onRocket(m) {
     const s = this.snakes.get(m.by);
     if (m.by === this.myId) this.pendingCost = Math.max(0, this.pendingCost - SKILLS.rocket.cost);
-    this.setFuel(s, m.fuel);
+    this.setFuel(s, m.fuel, m.ft);
     const rk = { by: m.by, x: m.x, y: m.y, a: m.a, tick: m.tick, end: null, predEnd: this.predictRocket(m) };
     // Our own shot: it replaces the oldest local copy, keeping what's already on
     // screen (e.g. an explosion that started).
@@ -536,7 +547,7 @@ export class ClientGame {
   onPickup(m) {
     this.items.delete(m.item);
     const by = this.snakes.get(m.by);
-    this.setFuel(by, m.fuel);
+    this.setFuel(by, m.fuel, m.ft);
     this.onEvent({ type: 'pickup', msg: m, def: FUEL, by });
   }
 
@@ -643,7 +654,7 @@ export class ClientGame {
         }
         // Hide a power-up we're about to collect (the server confirms it shortly).
         for (const it of this.items.values()) {
-          if (it.type === 'fuel' && this.me.fuel >= MAX_FUEL) continue; // full: the server leaves it
+          if (it.type === 'fuel' && this.myFuel >= MAX_FUEL - 0.5) continue; // (nearly) full: the server leaves it
           if (Math.hypot(it.x - p.x, it.y - p.y) < (it.type === 'fuel' ? FUEL_RADIUS : ITEM_RADIUS) + m.width / 2) it.localPick = performance.now();
         }
       }

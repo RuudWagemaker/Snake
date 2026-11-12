@@ -2,7 +2,7 @@ import {
   TICK_RATE, MIN_PLAYERS, MAX_PLAYERS, LOBBY_SECONDS, NEXT_ROUND_LOBBY_SECONDS, PRIVATE_LOBBY_SECONDS,
   COUNTDOWN_SECONDS, END_SECONDS, KILLER_LEFT, COLORS, fieldRadius,
   EFFECT_DELAY, ITEM_RADIUS, LINE_WIDTH,
-  FUEL_RADIUS, fuelTarget, FUEL_PER_ROCKET, START_FUEL, DEATH_DROP_EXTRA, SKILLS, SKILL_IDS, validSkills, MAX_FUEL, ROCKET_SPEED, ROCKET_RANGE, ROCKET_WIDTH, BLAST_R, DT, FIRE_LATE_TICKS,
+  FUEL_RADIUS, fuelTarget, FUEL_PER_ROCKET, START_FUEL, FUEL_REGEN, DEATH_DROP_EXTRA, SKILLS, SKILL_IDS, validSkills, MAX_FUEL, ROCKET_SPEED, ROCKET_RANGE, ROCKET_WIDTH, BLAST_R, DT, FIRE_LATE_TICKS,
 } from '../public/shared/constants.js';
 import {
   mulberry32, stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt, hitDist,
@@ -19,6 +19,9 @@ const END_TICKS = END_SECONDS * TICK_RATE;
 const BOT_AHEAD = 8;
 const ITEM_CHECK_TICKS = 15;    // how often items are topped up / removed outside the zone
 const HIST = 32;                // ticks of head positions kept per player (> FIRE_LATE_TICKS)
+
+/** A player's fuel for messages (it's fractional: it refills a little every tick). */
+const fv = (p) => Math.round(p.fuel * 1000) / 1000;
 
 function randomSkills(rng) {
   const ids = SKILL_IDS.slice();
@@ -260,7 +263,7 @@ export class Room {
     // a few fuel dots to start with; the rest pop up during the match
     for (let i = 0; i < Math.round(this.round.fuelTarget * 0.4); i++) this.spawnItem(zone0);
 
-    const info = players.map((p) => ({ id: p.id, name: p.name, color: p.color, style: p.style, bot: p.bot, x: p.x, y: p.y, a: p.a, fuel: p.fuel, skills: p.skills }));
+    const info = players.map((p) => ({ id: p.id, name: p.name, color: p.color, style: p.style, bot: p.bot, x: p.x, y: p.y, a: p.a, fuel: p.fuel, ft: 0, skills: p.skills }));
     for (const c of this.clients) {
       c.send({ t: 'start', you: c.player.id, seed, R0, playTick: this.round.playTick, tick: 0, players: info, items: this.round.items });
     }
@@ -288,8 +291,11 @@ export class Room {
         p.turn = p.botQueue.length ? p.botQueue.shift() : 0;
       }
     }
-    // Skills pressed for this tick, then the modifiers (speed, jump) for it
-    if (moving) this.skills(zone, t);
+    // Fuel refills slowly; then skills pressed for this tick, then the modifiers (speed, jump) for it
+    if (moving) {
+      for (const p of r.players) if (p.alive && p.fuel < MAX_FUEL) p.fuel = Math.min(MAX_FUEL, p.fuel + FUEL_REGEN / TICK_RATE);
+      this.skills(zone, t);
+    }
     for (const p of r.players) if (p.alive) modsAt(r.effects, p.id, t, p.mods);
 
     // 2. Movement + trail
@@ -393,21 +399,21 @@ export class Room {
         if (!def || !p.skills.includes(w.k)) continue;
         if (w.k === 'rocket') {
           if (!p.wantFire) { p.wantFire = true; p.fireTick = w.tick; }
-          else this.sendTo(p, { t: 'skill', by: p.id, k: 'rocket', ok: false, fuel: p.fuel });
+          else this.sendTo(p, { t: 'skill', by: p.id, k: 'rocket', ok: false, fuel: fv(p), ft: t });
           continue;
         }
         if (w.tick > t) { keep.push(w); continue; } // for later (lead): wait for it
         const start = Math.max(w.tick, t);
         // not while the same one is still running, and only with the fuel for it
         if (p.fuel < def.cost || r.effects.some((e) => e.type === def.effect && e.end > start && e.targets.includes(p.id))) {
-          this.sendTo(p, { t: 'skill', by: p.id, k: w.k, ok: false, fuel: p.fuel });
+          this.sendTo(p, { t: 'skill', by: p.id, k: w.k, ok: false, fuel: fv(p), ft: t });
           continue;
         }
         p.fuel -= def.cost;
         p.picks.skill = (p.picks.skill || 0) + 1;
         const end = start + Math.round(def.secs * TICK_RATE);
         r.effects.push({ type: def.effect, start, end, targets: [p.id] });
-        this.broadcast({ t: 'skill', by: p.id, k: w.k, ok: true, start, end, fuel: p.fuel });
+        this.broadcast({ t: 'skill', by: p.id, k: w.k, ok: true, start, end, fuel: fv(p), ft: t });
       }
       p.wantSkills = keep;
     }
@@ -424,7 +430,7 @@ export class Room {
       if (!p.wantFire || t < p.fireTick) continue; // stamped for a tick that hasn't come yet
       p.wantFire = false;
       if (!p.alive || deaths.has(p) || p.fuel < FUEL_PER_ROCKET) {
-        this.sendTo(p, { t: 'skill', by: p.id, k: 'rocket', ok: false, fuel: p.fuel });
+        this.sendTo(p, { t: 'skill', by: p.id, k: 'rocket', ok: false, fuel: fv(p), ft: t });
         continue;
       }
       p.fuel -= FUEL_PER_ROCKET;
@@ -440,7 +446,7 @@ export class Room {
         x: Math.fround(from.x + Math.cos(from.a) * off), y: Math.fround(from.y + Math.sin(from.a) * off),
       };
       r.rockets.push(rk);
-      this.broadcast({ t: 'rocket', id: rk.id, by: p.id, x: rk.x, y: rk.y, a: rk.a, tick: from.t, fuel: p.fuel });
+      this.broadcast({ t: 'rocket', id: rk.id, by: p.id, x: rk.x, y: rk.y, a: rk.a, tick: from.t, fuel: fv(p), ft: t });
     }
     r.grid.pruneBlasts(t);
     if (!r.rockets.length) return;
@@ -516,20 +522,20 @@ export class Room {
     const r = this.round;
     for (let i = r.items.length - 1; i >= 0; i--) {
       const it = r.items[i];
-      const p = r.players.find((q) => q.alive && !deaths.has(q) && q.fuel < MAX_FUEL &&
+      const p = r.players.find((q) => q.alive && !deaths.has(q) && q.fuel < MAX_FUEL - 0.5 &&
         Math.hypot(q.x - it.x, q.y - it.y) < FUEL_RADIUS + q.width / 2);
       if (!p) continue;
       r.items.splice(i, 1);
       p.picks.fuel = (p.picks.fuel || 0) + 1;
       p.fuel++;
-      this.broadcast({ t: 'pickup', item: it.id, type: 'fuel', by: p.id, x: it.x, y: it.y, fuel: p.fuel });
+      this.broadcast({ t: 'pickup', item: it.id, type: 'fuel', by: p.id, x: it.x, y: it.y, fuel: fv(p), ft: t });
     }
   }
 
   /** A crashed snake drops its fuel plus a few extra dots around where it died. */
   dropFuel(p, t) {
     const r = this.round;
-    const n = p.fuel + DEATH_DROP_EXTRA;
+    const n = Math.floor(p.fuel) + DEATH_DROP_EXTRA;
     p.fuel = 0;
     const add = [];
     for (let i = 0; i < n; i++) {

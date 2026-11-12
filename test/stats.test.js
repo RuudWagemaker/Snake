@@ -317,7 +317,7 @@ test('rockets: fuel, firing and a hole in a line', () => {
   assert.ok(launch, 'rocket launched');
   assert.equal(launch.tick, aimed.t);
   assert.ok(Math.hypot(launch.x - aimed.x, launch.y - aimed.y) < 20, 'from the aimed head position');
-  assert.equal(me.fuel, 0);
+  assert.ok(me.fuel < 0.05, `fuel used (${me.fuel})`);
   let blast = null;
   for (let i = 0; i < 30 && !blast; i++) { room.step(); blast = sent.find((m) => m.t === 'blast'); }
   assert.ok(blast && blast.r > 0, 'hit the wall');
@@ -355,7 +355,7 @@ test('skills cost fuel, start on their stamped tick, and a crash drops fuel', ()
   while (r.tick <= r.playTick + 5) room.step();
   const me = fake.player;
   assert.deepEqual(me.skills, ['boost', 'jump']);
-  assert.equal(me.fuel, 3);
+  assert.ok(me.fuel >= 3 && me.fuel < 3.3, `start fuel + a little refill (${me.fuel})`);
   const stamp = r.tick + 3;
   me.wantSkills.push({ k: 'boost', tick: stamp });
   room.step();
@@ -364,7 +364,7 @@ test('skills cost fuel, start on their stamped tick, and a crash drops fuel', ()
   const used = sent.find((m) => m.t === 'skill');
   assert.ok(used && used.ok);
   assert.equal(used.start, stamp);
-  assert.equal(me.fuel, 0);
+  assert.ok(me.fuel < 0.3, `boost paid (${me.fuel})`);
   assert.equal(me.mods.speed > 1, true);
   me.wantSkills.push({ k: 'jump', tick: r.tick + 1 });   // no fuel left: refused
   room.step(); room.step();
@@ -378,4 +378,22 @@ test('skills cost fuel, start on their stamped tick, and a crash drops fuel', ()
   room.kill(me, -1, 5, r.tick);
   assert.equal(r.items.length, before + 4 + 3);
   assert.equal(me.fuel, 0);
+});
+
+test('fuel refills slowly by itself, up to the maximum', () => {
+  const server = { clients: new Set(), removeRoom() {}, stats: null };
+  const fake = { ws: { readyState: 1 }, name: 'me', token: A, inputs: new InputBuffer(), send() {}, sendBinary() {}, sendRaw() {} };
+  const room = new Room(server, 1);
+  room.addClient(fake);
+  while (room.state !== 'playing') room.step();
+  const r = room.round;
+  while (r.tick <= r.playTick) room.step();
+  const me = fake.player;
+  me.fuel = 0;
+  r.items = []; // no dots: only the refill
+  for (let i = 0; i < TICK_RATE * 4 && me.alive; i++) room.step();
+  if (me.alive) assert.ok(Math.abs(me.fuel - 1) < 0.05, `about 1 fuel after 4 s (${me.fuel})`);
+  me.fuel = 9.99;
+  room.step(); room.step();
+  if (me.alive) assert.equal(me.fuel, 10);
 });

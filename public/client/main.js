@@ -801,7 +801,8 @@ function showSkillBar() {
   const me = game.me && game.controlling ? game.me : null;
   const now = performance.now();
   const fx = me ? game.myEffects(now) : [];
-  const key = me ? `${me.fuel}|${me.skills}|${skillBtns.map((b, i) => game.canUse(me.skills[i])).join()}|${fx.map((e) => e.type + Math.ceil(e.left * 5)).join()}` : '-';
+  const fuel = me ? game.myFuel : 0;
+  const key = me ? `${Math.round(fuel * 20)}|${me.skills}|${skillBtns.map((b, i) => game.canUse(me.skills[i])).join()}|${fx.map((e) => e.type + Math.ceil(e.left * 5)).join()}` : '-';
   if (key === skillShown) return;
   skillShown = key;
   const el = $('fuel');
@@ -809,7 +810,7 @@ function showSkillBar() {
   show(skillBar, !!me);
   show(steerEl, !!me && isTouch);
   if (!me) return;
-  el.innerHTML = `<span class="ok">\u26FD ${me.fuel}</span><span class="can">/${MAX_FUEL}</span>`;
+  el.innerHTML = `<span class="ok">\u26FD ${Math.floor(fuel)}</span><span class="fbar"><i style="width:${Math.round((100 * fuel) / MAX_FUEL)}%"></i></span>`;
   el.title = 'Fuel: collect the orange dots, spend it on your skills';
   skillBtns.forEach((b, i) => {
     const k = me.skills[i], def = SKILLS[k];
@@ -820,7 +821,7 @@ function showSkillBar() {
     b.classList.toggle('ready', game.canUse(k));
     b.classList.toggle('on', !!on);
     // fill: how much of the cost we have, or how long the skill still runs
-    b.querySelector('i').style.height = `${Math.round(100 * (on ? on.left / on.total : Math.min(1, me.fuel / def.cost)))}%`;
+    b.querySelector('i').style.height = `${Math.round(100 * (on ? on.left / on.total : Math.min(1, fuel / def.cost)))}%`;
   });
 }
 
