@@ -1,8 +1,8 @@
 // Unified input: keyboard, mouse/touch/pen (pointer events) and gamepads.
 // The most recently pressed control wins.
 //
-// Touch screens: one thumb steers with the ◀ ▶ pad, the other uses the skill
-// buttons. A mouse steers by holding the left or right half of the screen.
+// Touch screens and mouse: hold the left or right half of the screen to steer.
+// Skills: buttons on both sides (touch), Space / Shift, or gamepad buttons.
 
 const KEYS = {
   ArrowLeft: -1, KeyA: -1, KeyQ: -1, Comma: -1,
@@ -13,7 +13,7 @@ const SKILL_KEYS = { Space: 0, ArrowUp: 0, KeyW: 0, ShiftLeft: 1, ShiftRight: 1,
 const SKILL_BUTTONS = [[0, 2, 12], [1, 3, 13]]; // gamepad A/X/d-pad up, B/Y/d-pad down
 
 export class Input {
-  constructor(surface, pad = null) {
+  constructor(surface) {
     this.stack = [];      // [{src, dir}]
     this.padTurn = 0;
     this.enabled = true;  // pointer steering only while playing
@@ -52,27 +52,25 @@ export class Input {
     surface.addEventListener('pointercancel', up);
     surface.addEventListener('lostpointercapture', up);
 
-    // Touch: the ◀ ▶ steering pad (bottom left). Hold a side; slide the thumb
-    // across to switch sides. Touch events, cancelled so the browser never takes
-    // a held thumb over for a gesture.
-    if (pad) {
-      const opts = { passive: false };
-      const dirAt = (x) => { const r = pad.getBoundingClientRect(); return x < r.left + r.width / 2 ? -1 : 1; };
-      const sync = (e) => {
-        if (e.cancelable) e.preventDefault();
-        const down = new Set();
-        for (const t of e.targetTouches) {
-          down.add('s' + t.identifier);
-          const entry = this.stack.find((s) => s.src === 's' + t.identifier);
-          if (entry) entry.dir = dirAt(t.clientX);
-          else if (this.enabled) this.press('s' + t.identifier, dirAt(t.clientX));
-        }
-        // thumbs that lifted (or that the browser dropped) stop steering
-        for (const s of this.stack.slice()) if (s.src[0] === 's' && !down.has(s.src)) this.release(s.src);
-      };
-      for (const ev of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) pad.addEventListener(ev, sync, opts);
-      pad.addEventListener('contextmenu', (e) => e.preventDefault());
-    }
+    // Touch: hold the left half of the screen to turn left, the right half to
+    // turn right; the newest thumb wins, and sliding across switches sides.
+    // Touch events, cancelled, so the browser never takes a held thumb over for
+    // a gesture. (Skill buttons are separate elements: touching them doesn't steer.)
+    const opts = { passive: false };
+    const sync = (e) => {
+      if (e.cancelable) e.preventDefault();
+      const down = new Set();
+      for (const t of e.targetTouches) {
+        down.add('t' + t.identifier);
+        const dir = t.clientX < innerWidth / 2 ? -1 : 1;
+        const entry = this.stack.find((s) => s.src === 't' + t.identifier);
+        if (entry) entry.dir = dir;
+        else if (this.enabled) this.press('t' + t.identifier, dir);
+      }
+      // thumbs that lifted (or that the browser dropped) stop steering
+      for (const s of this.stack.slice()) if (s.src[0] === 't' && !down.has(s.src)) this.release(s.src);
+    };
+    for (const ev of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) surface.addEventListener(ev, sync, opts);
     surface.addEventListener('contextmenu', (e) => e.preventDefault());
 
     addEventListener('blur', () => this.clear());

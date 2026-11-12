@@ -37,20 +37,22 @@ function reloadForNewVersion() {
 
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const net = new Net();
-const input = new Input(canvas, document.getElementById('steer'));
+const input = new Input(canvas);
 // ---------------------------------------------------------------- skills
 // Two skills, picked in the menu (saved in localStorage), used with the buttons
 // on the right (touch), Space / Shift (keyboard) or A / B (gamepad).
 let mySkills = ['rocket', 'jump'];
 try { mySkills = validSkills(JSON.parse(localStorage.getItem('cr-skills') || 'null')); } catch {}
 const skillBar = document.getElementById('skillbar');
-const skillBtns = [...skillBar.querySelectorAll('.skill')];
+const skillBarL = document.getElementById('skillbar-l'); // touch only: the same 2 skills on the left
+const skillBtns = [...document.querySelectorAll('.skillbar .skill')];
 function useSlot(slot) {
   if (mode !== 'game' || !game.active || !game.me) return;
-  const btn = skillBtns[slot];
   if (game.useSkill(game.me.skills[slot])) {
-    btn.classList.add('bang');
-    setTimeout(() => btn.classList.remove('bang'), 140);
+    for (const btn of skillBtns) if (Number(btn.dataset.slot) === slot) {
+      btn.classList.add('bang');
+      setTimeout(() => btn.classList.remove('bang'), 140);
+    }
     showSkillBar();
   }
 }
@@ -59,10 +61,10 @@ for (const b of skillBtns) {
   b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); useSlot(Number(b.dataset.slot)); });
   b.addEventListener('contextmenu', (e) => e.preventDefault());
 }
-if (isTouch) { skillBar.classList.add('touch'); document.documentElement.classList.add('touch'); }
+if (isTouch) { skillBar.classList.add('touch'); skillBarL.classList.add('touch'); document.documentElement.classList.add('touch'); }
 
-// The ◀ ▶ steering pad (touch): shown with the skill buttons, lit while held
-const steerEl = document.getElementById('steer');
+// Touch: faint ◀ ▶ in the bottom corners, lit while that half is held
+const steerL = document.getElementById('steer-l'), steerR = document.getElementById('steer-r');
 const game = new ClientGame(net);
 const renderer = new Renderer(canvas, $('minimap'));
 
@@ -776,14 +778,14 @@ function frame(now) {
     else if (beat === 0 && lastBeat > 0) sound.play('go');
     lastBeat = beat;
   }
-  if (toGo > 0) ui.center.innerHTML = `${Math.ceil(toGo)}<small>${isTouch ? 'hold \u25C0 \u25B6 to steer' : '← → steer · Space / Shift skills'}</small>`;
+  if (toGo > 0) ui.center.innerHTML = `${Math.ceil(toGo)}<small>${isTouch ? 'hold the left or right half to steer' : '← → steer · Space / Shift skills'}</small>`;
   else if (toGo > -0.8) ui.center.textContent = 'GO!';
   else if (now < flashUntil) { /* showing a power-up warning */ }
   else if (ui.center.innerHTML) ui.center.innerHTML = '';
-  if (isTouch && !steerEl.hidden) {
+  if (isTouch && !steerL.hidden) {
     const t = input.turn;
-    steerEl.firstElementChild.classList.toggle('on', t < 0);
-    steerEl.lastElementChild.classList.toggle('on', t > 0);
+    steerL.classList.toggle('on', t < 0);
+    steerR.classList.toggle('on', t > 0);
   }
 
 
@@ -802,18 +804,18 @@ function showSkillBar() {
   const now = performance.now();
   const fx = me ? game.myEffects(now) : [];
   const fuel = me ? game.myFuel : 0;
-  const key = me ? `${Math.round(fuel * 20)}|${me.skills}|${skillBtns.map((b, i) => game.canUse(me.skills[i])).join()}|${fx.map((e) => e.type + Math.ceil(e.left * 5)).join()}` : '-';
+  const key = me ? `${Math.round(fuel * 20)}|${me.skills}|${me.skills.map((k) => game.canUse(k)).join()}|${fx.map((e) => e.type + Math.ceil(e.left * 5)).join()}` : '-';
   if (key === skillShown) return;
   skillShown = key;
   const el = $('fuel');
   show(el, !!me);
   show(skillBar, !!me);
-  show(steerEl, !!me && isTouch);
+  for (const el of [skillBarL, steerL, steerR]) show(el, !!me && isTouch);
   if (!me) return;
   el.innerHTML = `<span class="ok">\u26FD ${Math.floor(fuel)}</span><span class="fbar"><i style="width:${Math.round((100 * fuel) / MAX_FUEL)}%"></i></span>`;
   el.title = 'Fuel: collect the orange dots, spend it on your skills';
-  skillBtns.forEach((b, i) => {
-    const k = me.skills[i], def = SKILLS[k];
+  skillBtns.forEach((b) => {
+    const k = me.skills[Number(b.dataset.slot)], def = SKILLS[k];
     const on = def.effect ? fx.find((e) => e.type === def.effect && !e.pending) : null;
     b.querySelector('span').textContent = def.icon;
     b.querySelector('b').textContent = def.cost;

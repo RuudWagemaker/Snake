@@ -173,15 +173,15 @@ html.touch .no-touch { display: none; }
 #feed { position: absolute; left: max(12px, env(safe-area-inset-left)); bottom: max(12px, env(safe-area-inset-bottom)); font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
 body:has(#dead:not([hidden])) #feed { display: none; }
 #feed { max-width: calc(100% - 130px); }
-.steer {
-  /* the invisible padding makes the touch area bigger than the buttons (they stay where they were) */
-  --hit: 30px;
-  position: absolute; left: calc(max(14px, env(safe-area-inset-left)) - var(--hit)); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 6px - var(--hit));
-  padding: calc(var(--hit) + 20px) var(--hit) var(--hit); display: flex; gap: 8px; pointer-events: auto; touch-action: none;
-}
-.steer div { width: 84px; height: 84px; border-radius: 22px; display: flex; align-items: center; justify-content: center; font-size: 30px; color: rgba(255,255,255,.55); background: rgba(38,48,73,.7); border: 3px solid rgba(255,255,255,.12); }
-.steer div.on { background: rgba(77,171,247,.75); color: #fff; border-color: #fff; }
-#hud:has(#steer:not([hidden])) #feed { bottom: calc(max(14px, env(safe-area-inset-bottom)) + 104px); }
+/* touch: both skill buttons on each side, a bit above where the thumbs rest */
+.skillbar.touch { bottom: calc(max(14px, env(safe-area-inset-bottom)) + 22%); }
+.skillbar.left { right: auto; left: calc(max(14px, env(safe-area-inset-left)) - 16px); }
+.steer-ind { position: absolute; bottom: calc(max(18px, env(safe-area-inset-bottom)) + 10px); font-size: 34px; color: rgba(255,255,255,.16); pointer-events: none; transition: color .08s; }
+.steer-ind.left { left: calc(max(14px, env(safe-area-inset-left)) + 16px); }
+.steer-ind.right { right: calc(max(14px, env(safe-area-inset-right)) + 16px); }
+.steer-ind.on { color: rgba(255,255,255,.6); }
+/* touch: the kill feed goes up top (the thumbs cover the bottom) */
+html.touch #feed { top: calc(max(12px, env(safe-area-inset-top)) + 112px); bottom: auto; left: auto; right: max(12px, env(safe-area-inset-right)); align-items: flex-end; max-width: 70%; }
 #feed div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 #feed div { background: rgba(10,14,22,.6); padding: 4px 10px; border-radius: 8px; transition: opacity .5s; }

@@ -119,13 +119,13 @@ async function main() {
     }
 
     if (!QUICK) {
-      // Hold ▶ on the steering pad so we spiral and crash, then wait for the round to end.
-      if (!(await visible(p, '#steer'))) problems.push('steering pad: not shown on the phone');
-      const pad = await p.locator('#steer div').last().boundingBox();
+      // Hold the right half so we spiral and crash, then wait for the round to end.
+      if (!(await visible(p, '#skillbar-l'))) problems.push('skills: no buttons on the left side on the phone');
+      const vw = p.viewportSize();
       const cdp = await p.context().newCDPSession(p);
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: pad.x + pad.width / 2, y: pad.y + pad.height / 2, id: 1 }] });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: vw.width * 0.8, y: vw.height * 0.9, id: 1 }] });
       await p.waitForTimeout(250);
-      if (!(await p.evaluate(() => document.querySelector('#steer div:last-child').classList.contains('on')))) problems.push('steering pad: ▶ not lit while held');
+      if (!(await p.evaluate(() => document.getElementById('steer-r').classList.contains('on')))) problems.push('steering: ▶ not lit while holding the right half');
       await shot(p, '05c-phone-steer');
       const box = p.viewportSize();
       await p.waitForSelector('#dead:not([hidden]), #end:not([hidden])', { timeout: 240000 });
