@@ -17,7 +17,7 @@
 //    glide in. While spectating they're shown slightly in the past and
 //    interpolated (smoothest). Either way, if updates stop for a moment they
 //    keep moving instead of freezing.
-import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, FUEL_PICK_R, FUEL, FUEL_PER_ROCKET, MAX_FUEL, FUEL_REGEN, EFFECT_DELAY, ROCKET_RANGE, ROCKET_SPEED, ROCKET_WIDTH, SKILLS, EFFECT_INFO, DEFAULT_SKILLS } from '../shared/constants.js';
+import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, FUEL_PICK_R, FUEL, FUEL_PER_ROCKET, MAX_FUEL, FUEL_REGEN, SELF_IGNORE_TICKS, ROCKET_RANGE, ROCKET_SPEED, ROCKET_WIDTH, BLAST_R, SKILLS, EFFECT_INFO, DEFAULT_SKILLS } from '../shared/constants.js';
 import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt, distSqPointSeg } from '../shared/sim.js';
 import { FLAG_GAP, FLAG_DIED, FLAG_CUT, encodeInput, encodeInputs } from '../shared/protocol.js';
 
@@ -443,8 +443,15 @@ export class ClientGame {
     this.net.send({ t: 'skill', k: 'rocket', tick });
     // Draw it right away from our predicted head (the server's copy takes over when it arrives).
     const p = this.pred, w = modsAt(this.effects, this.myId, tick, {}).width;
-    const local = { by: this.myId, x: p.x + Math.cos(p.a) * (8 + w), y: p.y + Math.sin(p.a) * (8 + w), a: p.a, tick, end: null, local: true, firedAt: now };
+    void w;
+    const local = { by: this.myId, x: p.x + Math.cos(p.a) * 2, y: p.y + Math.sin(p.a) * 2, a: p.a, tick, end: null, local: true, firedAt: now };
     local.predEnd = this.predictRocket(local);
+    // Our own prediction: open the hole where we expect the hit, so our snake doesn't
+    // stop at the line while the server's answer is on its way.
+    if (local.predEnd.hit) {
+      const d = local.predEnd.d, hitTick = tick + Math.max(0, Math.ceil(d / (ROCKET_SPEED * DT)) - 1);
+      this.grid.blast(local.x + Math.cos(p.a) * d, local.y + Math.sin(p.a) * d, BLAST_R, hitTick);
+    }
     this.rockets.set('local:' + tick, local);
     return true;
   }
@@ -480,7 +487,7 @@ export class ClientGame {
     let x = m.x, y = m.y;
     for (let d = step; d <= ROCKET_RANGE; d += step) {
       x += cx; y += cy;
-      if (this.grid.hit(x, y, ROCKET_WIDTH, m.by, m.tick, m.tick + Math.round(d / (ROCKET_SPEED * DT))) !== -2) return { d, hit: true };
+      if (this.grid.hit(x, y, ROCKET_WIDTH, m.by, m.tick - SELF_IGNORE_TICKS, m.tick + Math.round(d / (ROCKET_SPEED * DT))) !== -2) return { d, hit: true };
       if (Math.hypot(x - zone.x, y - zone.y) > zone.r) return { d, hit: false };
     }
     return { d: ROCKET_RANGE, hit: false };
@@ -488,7 +495,7 @@ export class ClientGame {
 
   onBlast(m) {
     const rk = this.rockets.get(m.id);
-    if (rk) rk.end = { x: m.x, y: m.y, r: m.r, tick: m.at - EFFECT_DELAY };
+    if (rk) rk.end = { x: m.x, y: m.y, r: m.r, tick: m.at };
     if (m.r > 0) {
       this.grid.blast(m.x, m.y, m.r, m.at); // collisions: gone from tick `at` on, like on the server
       const hole = { x: m.x, y: m.y, r: m.r, at: m.at, by: m.by, shown: false };

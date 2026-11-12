@@ -1,7 +1,7 @@
 import {
   TICK_RATE, MIN_PLAYERS, MAX_PLAYERS, LOBBY_SECONDS, NEXT_ROUND_LOBBY_SECONDS, PRIVATE_LOBBY_SECONDS,
   COUNTDOWN_SECONDS, END_SECONDS, KILLER_LEFT, COLORS, fieldRadius,
-  EFFECT_DELAY, ITEM_RADIUS, LINE_WIDTH,
+  ITEM_RADIUS, LINE_WIDTH, SELF_IGNORE_TICKS,
   FUEL_RADIUS, FUEL_PICK_R, fuelTarget, FUEL_PER_ROCKET, START_FUEL, FUEL_REGEN, DEATH_DROP_EXTRA, SKILLS, SKILL_IDS, validSkills, MAX_FUEL, ROCKET_SPEED, ROCKET_RANGE, ROCKET_WIDTH, BLAST_R, DT, FIRE_LATE_TICKS,
 } from '../public/shared/constants.js';
 import {
@@ -315,6 +315,10 @@ export class Room {
         p.shield = m.shield;
       }
 
+      // Rockets fly before the collision check: a hole opens on the tick the rocket
+      // hits, so a snake right behind its own rocket drives through instead of crashing.
+      this.rockets(deaths, zone, t);
+
       // 3. Collisions (after everyone moved, so head-on crashes kill both)
       for (const p of r.players) {
         if (!p.alive) continue;
@@ -337,7 +341,6 @@ export class Room {
     }
 
     if (moving) {
-      this.rockets(deaths, zone, t);
       this.pickups(deaths, t);
       if (t % ITEM_CHECK_TICKS === 0) this.maintainItems(zone, t);
       this.planBots(deaths, t);
@@ -440,7 +443,7 @@ export class Room {
       const ft = Math.max(p.fireTick, t - FIRE_LATE_TICKS);
       const h = p.hist[ft % HIST];
       const from = h && h.t === ft ? h : { t, x: p.x, y: p.y, a: p.a };
-      const off = 8 + p.width;
+      const off = 2; // from the head itself (its own line behind it is ignored), so a line right in front is still hit
       const rk = {
         id: r.nextRocketId++, by: p.id, from: from.t, catchUp: t - from.t, dist: 0, a: from.a,
         x: Math.fround(from.x + Math.cos(from.a) * off), y: Math.fround(from.y + Math.sin(from.a) * off),
@@ -460,11 +463,11 @@ export class Room {
       for (let k = 0; k < steps && !end; k++) {
         rk.x += cx; rk.y += cy; rk.dist += step / sub;
         // the shooter's own line drawn after the shot is ignored (it runs right behind the rocket)
-        if (r.grid.hit(rk.x, rk.y, ROCKET_WIDTH, rk.by, rk.from, t) !== -2) end = { r: BLAST_R };
+        if (r.grid.hit(rk.x, rk.y, ROCKET_WIDTH, rk.by, rk.from - SELF_IGNORE_TICKS, t) !== -2) end = { r: BLAST_R };
         else if (Math.hypot(rk.x - zone.x, rk.y - zone.y) > zone.r || rk.dist >= ROCKET_RANGE) end = { r: 0 };
       }
       if (!end) { keep.push(rk); continue; }
-      const at = t + EFFECT_DELAY;
+      const at = t; // the hole is there right away
       const x = Math.fround(rk.x), y = Math.fround(rk.y);
       if (end.r) {
         r.grid.blast(x, y, end.r, at);

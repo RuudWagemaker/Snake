@@ -415,3 +415,24 @@ test('fuel magnet: a dot next to the path is collected without an exact hit', ()
   for (let i = 0; i < 20 && me.alive; i++) room.step();
   if (me.alive) assert.ok(!r.items.some((it) => it.id === 999) && me.fuel >= 1, 'collected');
 });
+
+test('a rocket fired right before a line saves you: the hole is there in time', () => {
+  for (const dist of [6, 12, 25]) {
+    const server = { clients: new Set(), removeRoom() {}, stats: null };
+    const fake = { ws: { readyState: 1 }, name: 'me', token: A, inputs: new InputBuffer(), skills: ['rocket', 'jump'], send() {}, sendBinary() {}, sendRaw() {} };
+    const room = new Room(server, 1);
+    room.addClient(fake);
+    while (room.state !== 'playing') room.step();
+    const r = room.round;
+    while (r.tick <= r.playTick + 10) room.step();
+    const me = fake.player;
+    // a long wall across our path, `dist` units in front of the head
+    const wx = me.x + Math.cos(me.a) * (dist + 3), wy = me.y + Math.sin(me.a) * (dist + 3);
+    const nx = -Math.sin(me.a), ny = Math.cos(me.a);
+    for (let i = -30; i < 30; i++) r.grid.add(wx + nx * i * 5, wy + ny * i * 5, wx + nx * (i + 1) * 5, wy + ny * (i + 1) * 5, 99, r.tick);
+    me.fuel = 10;
+    me.wantSkills.push({ k: 'rocket', tick: r.tick + 1 });
+    for (let i = 0; i < 20; i++) room.step();
+    assert.ok(me.alive, `survived a line ${dist} units ahead`);
+  }
+});
