@@ -337,13 +337,22 @@ export class Renderer {
       if (it.localPick && now - it.localPick < 800) continue; // we're picking it up
       if (it.type === 'fuel') {
         // small glowing dot
-        const tw = 1 + Math.sin(now / 300 + it.id) * 0.15;
+        // pops in when it appears, then twinkles
+        const age = it.bornAt ? Math.max(0, (now - it.bornAt) / 350) : 1;
+        const pop = age >= 1 ? 1 : age < 0.7 ? (age / 0.7) * 1.4 : 1.4 - ((age - 0.7) / 0.3) * 0.4;
+        const tw = (1 + Math.sin(now / 300 + it.id) * 0.15) * pop;
+        if (age < 1) {
+          ctx.globalAlpha = (1 - age) * 0.6;
+          ctx.strokeStyle = '#ffd8a8';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(it.x, it.y, FUEL_RADIUS * (1 + 3 * age), 0, TAU); ctx.stroke();
+        }
         ctx.globalAlpha = 0.4;
         ctx.fillStyle = FUEL_COL;
         ctx.beginPath(); ctx.arc(it.x, it.y, FUEL_RADIUS * 1.8 * tw, 0, TAU); ctx.fill();
         ctx.globalAlpha = 1;
         ctx.fillStyle = '#ffd8a8';
-        ctx.beginPath(); ctx.arc(it.x, it.y, FUEL_RADIUS * 0.8, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(it.x, it.y, FUEL_RADIUS * 0.8 * pop, 0, TAU); ctx.fill();
         continue;
       }
       const def = POWERUPS[it.type];
@@ -380,12 +389,18 @@ export class Renderer {
     const perTick = ROCKET_SPEED / TICK_RATE;
     for (const rk of game.rockets.values()) {
       if (rt < rk.tick) continue;
-      let d = (rt - rk.tick + 1) * perTick; // the server moves it one step on its launch tick
-      if (rk.end) {
-        const max = Math.hypot(rk.end.x - rk.x, rk.end.y - rk.y);
-        if (d >= max) continue;
-      }
+      const d = (rt - rk.tick + 1) * perTick; // the server moves it one step on its launch tick
+      // Stop at the line: the server's hit point, or until that arrives, our own prediction.
+      const max = rk.end ? Math.hypot(rk.end.x - rk.x, rk.end.y - rk.y) : rk.predEnd.d;
       const c = Math.cos(rk.a), s = Math.sin(rk.a);
+      if (d >= max) {
+        if (!rk.impactAt) {
+          rk.impactAt = now;
+          rk.ix = rk.x + c * max; rk.iy = rk.y + s * max;
+          rk.blew = rk.end ? rk.end.r > 0 : rk.predEnd.hit;
+        }
+        continue;
+      }
       const x = rk.x + c * d, y = rk.y + s * d;
       if (x < v.x0 - 60 || x > v.x1 + 60 || y < v.y0 - 60 || y > v.y1 + 60) continue;
       const tail = Math.min(d, 46);
@@ -403,6 +418,23 @@ export class Renderer {
       ctx.lineTo(x - c * 5 + s * 5, y - s * 5 - c * 5);
       ctx.closePath(); ctx.fill();
       ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke();
+    }
+    // Explosion where the rocket reached the line (the hole opens a moment later, inside it)
+    for (const rk of game.rockets.values()) {
+      if (!rk.impactAt || !rk.blew) continue;
+      if (rk.end && rk.end.r && !rk.moved) { rk.ix = rk.end.x; rk.iy = rk.end.y; rk.moved = true; } // server's spot
+      // Fades out over 650 ms, but holds until the hole opens (later with lag).
+      let k = (now - rk.impactAt) / 650;
+      if (rk.hole) k = Math.min(k, rk.hole.shown ? 0.6 + (now - rk.hole.shownAt) / 700 : 0.6);
+      if (k > 1 || rk.ix < v.x0 - 80 || rk.ix > v.x1 + 80 || rk.iy < v.y0 - 80 || rk.iy > v.y1 + 80) continue;
+      const grow = 1 - (1 - k) * (1 - k);
+      ctx.globalAlpha = (1 - k) * 0.6;
+      ctx.fillStyle = '#ffd8a8';
+      ctx.beginPath(); ctx.arc(rk.ix, rk.iy, 8 + 26 * grow, 0, TAU); ctx.fill();
+      ctx.globalAlpha = (1 - k) * 0.9;
+      ctx.fillStyle = '#fff4e6';
+      ctx.beginPath(); ctx.arc(rk.ix, rk.iy, 5 + 10 * (1 - k), 0, TAU); ctx.fill();
+      ctx.globalAlpha = 1;
     }
     for (const h of game.holes) {
       if (!h.shown) continue;

@@ -333,8 +333,11 @@ test('fuel: many small dots on the field, power-ups as before', () => {
   const room = new Room(server, 1);
   room.addClient(fake);
   while (room.state !== 'playing') room.step();
-  const items = room.round.items;
-  const fuel = items.filter((it) => it.type === 'fuel').length;
-  assert.ok(fuel >= 50, `lots of fuel dots (${fuel})`);
-  assert.ok(items.length - fuel >= 6 && items.length - fuel <= 10, 'power-ups as before');
+  const count = () => room.round.items.filter((it) => it.type === 'fuel').length;
+  const atStart = count();
+  assert.ok(atStart >= 15, `some fuel dots at the start (${atStart})`);
+  const power = room.round.items.length - atStart;
+  assert.ok(power >= 6 && power <= 10, 'power-ups as before');
+  for (let i = 0; i < TICK_RATE * 10 && room.state === 'playing'; i++) room.step();
+  assert.ok(count() >= atStart + 15, `more pop up during the match (${count()})`);
 });

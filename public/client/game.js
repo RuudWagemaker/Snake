@@ -17,7 +17,7 @@
 //    glide in. While spectating they're shown slightly in the past and
 //    interpolated (smoothest). Either way, if updates stop for a moment they
 //    keep moving instead of freezing.
-import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, ITEM_RADIUS, FUEL_RADIUS, POWERUPS, FUEL, FUEL_PER_ROCKET, MAX_FUEL, EFFECT_DELAY } from '../shared/constants.js';
+import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, ITEM_RADIUS, FUEL_RADIUS, POWERUPS, FUEL, FUEL_PER_ROCKET, MAX_FUEL, EFFECT_DELAY, ROCKET_RANGE, ROCKET_SPEED, ROCKET_WIDTH } from '../shared/constants.js';
 import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt, distSqPointSeg } from '../shared/sim.js';
 import { FLAG_GAP, FLAG_DIED, FLAG_CUT, encodeInput, encodeInputs } from '../shared/protocol.js';
 
@@ -272,7 +272,7 @@ export class ClientGame {
         else this.reconcile(mine, d.tick);
       }
     }
-    if (this.holes.length) this.applyHoles();
+    if (this.holes.length || this.rockets.size) this.applyHoles();
     return true;
   }
 
@@ -363,23 +363,60 @@ export class ClientGame {
     if (this.lastTarget === null || this.lastTarget <= this.playTick) return false; // countdown
     this.lastFireAt = now;
     // Stamped with the tick we're showing our snake at, so it leaves from there.
-    this.net.send({ t: 'fire', tick: this.lastTarget });
+    const tick = this.lastTarget;
+    this.net.send({ t: 'fire', tick });
+    // Draw it right away from our predicted head (the server's copy takes over when it arrives).
+    const p = this.pred, w = modsAt(this.effects, this.myId, tick, {}).width;
+    const local = { by: this.myId, x: p.x + Math.cos(p.a) * (8 + w), y: p.y + Math.sin(p.a) * (8 + w), a: p.a, tick, end: null, local: true, firedAt: now };
+    local.predEnd = this.predictRocket(local);
+    this.rockets.set('local:' + tick, local);
     return true;
   }
 
   onRocket(m) {
     const s = this.snakes.get(m.by);
     if (s) s.fuel = m.fuel;
-    this.rockets.set(m.id, { by: m.by, x: m.x, y: m.y, a: m.a, tick: m.tick, end: null });
+    const rk = { by: m.by, x: m.x, y: m.y, a: m.a, tick: m.tick, end: null, predEnd: this.predictRocket(m) };
+    // Our own shot: it replaces the oldest local copy, keeping what's already on
+    // screen (e.g. an explosion that started).
+    let localKey = null;
+    if (m.by === this.myId) {
+      for (const [k, r] of this.rockets) if (r.local && (localKey === null || r.tick < this.rockets.get(localKey).tick)) localKey = k;
+    }
+    const local = localKey !== null ? this.rockets.get(localKey) : null;
+    if (local) {
+      this.rockets.delete(localKey);
+      for (const k of ['impactAt', 'ix', 'iy', 'blew']) if (local[k] !== undefined) rk[k] = local[k];
+    }
+    this.rockets.set(m.id, rk);
     this.onEvent({ type: 'rocket', msg: m, by: s });
+  }
+
+  /**
+   * Where a rocket will hit, from the lines we know about (same checks as the
+   * server). Lets us stop it right at the line instead of flying on until the
+   * server's verdict arrives. Returns {d: distance flown, hit: true if it hits a line}.
+   */
+  predictRocket(m) {
+    const zone = zoneAt(this.plan, m.tick - this.playTick);
+    const step = 5, cx = Math.cos(m.a) * step, cy = Math.sin(m.a) * step;
+    let x = m.x, y = m.y;
+    for (let d = step; d <= ROCKET_RANGE; d += step) {
+      x += cx; y += cy;
+      if (this.grid.hit(x, y, ROCKET_WIDTH, m.by, m.tick, m.tick + Math.round(d / (ROCKET_SPEED * DT))) !== -2) return { d, hit: true };
+      if (Math.hypot(x - zone.x, y - zone.y) > zone.r) return { d, hit: false };
+    }
+    return { d: ROCKET_RANGE, hit: false };
   }
 
   onBlast(m) {
     const rk = this.rockets.get(m.id);
-    if (rk) rk.end = { x: m.x, y: m.y, tick: m.at - EFFECT_DELAY };
+    if (rk) rk.end = { x: m.x, y: m.y, r: m.r, tick: m.at - EFFECT_DELAY };
     if (m.r > 0) {
       this.grid.blast(m.x, m.y, m.r, m.at); // collisions: gone from tick `at` on, like on the server
-      this.holes.push({ x: m.x, y: m.y, r: m.r, at: m.at, by: m.by, shown: false });
+      const hole = { x: m.x, y: m.y, r: m.r, at: m.at, by: m.by, shown: false };
+      this.holes.push(hole);
+      if (rk) rk.hole = hole;
       this.applyHoles(); // snake data (UDP) may already be past `at`
     }
   }
@@ -398,7 +435,9 @@ export class ClientGame {
     }
     // forget old ones (rockets after their flight, holes once nothing new can be cut)
     if (this.holes.length > 8) this.holes = this.holes.filter((h) => !h.shown || h.at > this.latestTick - 60);
-    for (const [id, rk] of this.rockets) if (rk.end && rk.end.tick < this.latestTick - 60) this.rockets.delete(id);
+    for (const [id, rk] of this.rockets) {
+      if ((rk.end && rk.end.tick < this.latestTick - 60) || (rk.local && performance.now() - rk.firedAt > 1500)) this.rockets.delete(id);
+    }
     this.grid.pruneBlasts(this.latestTick - 60);
   }
 
@@ -418,7 +457,8 @@ export class ClientGame {
 
   onItems(m) {
     for (const id of m.rem || []) this.items.delete(id);
-    for (const it of m.add || []) this.items.set(it.id, it);
+    const now = performance.now();
+    for (const it of m.add || []) { it.bornAt = now; this.items.set(it.id, it); } // pops in
   }
 
   onPickup(m) {

@@ -250,7 +250,8 @@ export class Room {
     this.state = 'playing';
     const zone0 = zoneAt(this.round.plan, 0);
     for (let i = 0; i < this.round.itemTarget; i++) this.spawnItem(zone0, false);
-    for (let i = 0; i < this.round.fuelTarget; i++) this.spawnItem(zone0, true);
+    // a few fuel dots to start with; the rest pop up during the match
+    for (let i = 0; i < Math.round(this.round.fuelTarget * 0.4); i++) this.spawnItem(zone0, true);
 
     const info = players.map((p) => ({ id: p.id, name: p.name, color: p.color, style: p.style, bot: p.bot, x: p.x, y: p.y, a: p.a, fuel: p.fuel || undefined }));
     for (const c of this.clients) {
@@ -459,7 +460,7 @@ export class Room {
         const it = this.spawnItem(zone, false);
         if (it) add.push(it);
       }
-      for (let i = 0; i < 3 && fuel + i < fuelGoal; i++) {
+      for (let i = 0; i < 2 && fuel + i < fuelGoal; i++) {
         const it = this.spawnItem(zone, true);
         if (it) add.push(it);
       }
