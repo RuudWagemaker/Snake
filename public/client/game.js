@@ -154,6 +154,7 @@ export class ClientGame {
     this.items = new Map((msg.items || []).map((it) => [it.id, it]));
     this.effects = [];        // power-up effects {type, start, end, targets}
     this.popups = [];         // floating pickup texts {x, y, text, good, at}
+    this.flyers = [];         // collected fuel dots flying into a head {x, y, sn, at}
     this.rockets = new Map(); // id -> {by, x, y, a, tick, end: {x, y, tick} | null}
     this.holes = [];          // rocket holes {x, y, r, at, shown}: drawn once the server reaches `at`
     this.lastFireAt = 0;
@@ -545,6 +546,9 @@ export class ClientGame {
   }
 
   onPickup(m) {
+    const it = this.items.get(m.item);
+    const by0 = this.snakes.get(m.by);
+    if (by0 && !(it && it.localPick && m.by === this.myId)) this.flyers.push({ x: m.x, y: m.y, sn: by0, at: performance.now() });
     this.items.delete(m.item);
     const by = this.snakes.get(m.by);
     this.setFuel(by, m.fuel, m.ft);
@@ -655,7 +659,11 @@ export class ClientGame {
         // Hide a power-up we're about to collect (the server confirms it shortly).
         for (const it of this.items.values()) {
           if (it.type === 'fuel' && this.myFuel >= MAX_FUEL - 0.5) continue; // (nearly) full: the server leaves it
-          if (Math.hypot(it.x - p.x, it.y - p.y) < FUEL_PICK_R + m.width / 2) it.localPick = performance.now();
+          if ((!it.localPick || performance.now() - it.localPick > 800) && Math.hypot(it.x - p.x, it.y - p.y) < FUEL_PICK_R + m.width / 2) {
+            // we're about to collect it (the server confirms shortly): it flies into our head now
+            it.localPick = performance.now();
+            this.flyers.push({ x: it.x, y: it.y, sn: this.me, at: it.localPick });
+          }
         }
       }
       this.path.push({ x: p.x, y: p.y, a: p.a, t: tt, w: m.width, solid: !m.ghost && (tt <= this.playTick || !this.myGaps.isGap(tt - this.playTick)) });

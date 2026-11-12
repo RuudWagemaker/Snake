@@ -1,4 +1,4 @@
-import { LINE_WIDTH, MAX_WIDTH, FUEL_RADIUS, FUEL_MAGNET_R, ROCKET_SPEED, TICK_RATE } from '../shared/constants.js';
+import { LINE_WIDTH, MAX_WIDTH, FUEL_RADIUS, ROCKET_SPEED, TICK_RATE } from '../shared/constants.js';
 import { FLAG_GAP, FLAG_CUT } from '../shared/protocol.js';
 import { CHUNK } from './game.js';
 
@@ -328,10 +328,19 @@ export class Renderer {
 
   drawItems(game, v, now, myHead) {
     const ctx = this.ctx;
-    // Magnet: dots near a head are drawn sliding toward it (heads from the last frame)
-    const heads = [];
-    if (myHead) heads.push(myHead);
-    for (const sn of game.list) if (sn.alive && sn !== (myHead ? game.me : null) && sn.drawnX !== undefined) heads.push({ x: sn.drawnX, y: sn.drawnY });
+    // Collected dots fly into the head that picked them up
+    game.flyers = game.flyers.filter((fl) => now - fl.at < 230);
+    for (const fl of game.flyers) {
+      const k = (now - fl.at) / 230, e = k * k;
+      const h = fl.sn === game.me && myHead ? myHead : { x: fl.sn.drawnX ?? fl.x, y: fl.sn.drawnY ?? fl.y };
+      const x = fl.x + (h.x - fl.x) * e, y = fl.y + (h.y - fl.y) * e;
+      ctx.globalAlpha = 0.4 * (1 - k);
+      ctx.fillStyle = FUEL_COL;
+      ctx.beginPath(); ctx.arc(x, y, FUEL_RADIUS * 1.8, 0, TAU); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#ffd8a8';
+      ctx.beginPath(); ctx.arc(x, y, FUEL_RADIUS * 0.8 * (1 - 0.6 * k), 0, TAU); ctx.fill();
+    }
     const pulse = 1 + Math.sin(now / 250) * 0.08;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -339,15 +348,7 @@ export class Renderer {
       if (it.x < v.x0 - 30 || it.x > v.x1 + 30 || it.y < v.y0 - 30 || it.y > v.y1 + 30) continue;
       if (it.localPick && now - it.localPick < 800) continue; // we're picking it up
       if (it.type === 'fuel') {
-        let x = it.x, y = it.y;
-        for (const h of heads) {
-          const dx = h.x - it.x, dy = h.y - it.y, d = Math.hypot(dx, dy);
-          if (d < FUEL_MAGNET_R) {
-            const k = 0.7 * (1 - d / FUEL_MAGNET_R) ** 0.7;
-            x = it.x + dx * k; y = it.y + dy * k;
-            break;
-          }
-        }
+        const x = it.x, y = it.y;
         // small glowing dot
         // pops in when it appears, then twinkles
         const age = it.bornAt ? Math.max(0, (now - it.bornAt) / 350) : 1;
