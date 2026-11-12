@@ -13,8 +13,8 @@ const KEYS = {
 // skill slot 1 and 2
 const SKILL_KEYS = { Space: 0, ArrowUp: 0, KeyW: 0, ShiftLeft: 1, ShiftRight: 1, ArrowDown: 1, KeyS: 1 };
 const SKILL_BUTTONS = [[0, 2, 12], [1, 3, 13]]; // gamepad A/X/d-pad up, B/Y/d-pad down
-const STICK_DEAD = 14;       // px: closer to where the thumb landed = go straight
-const STICK_MAX = 60;        // px: the knob doesn't go further than this
+const STICK_DEAD = 10;       // px: closer to where the thumb landed = go straight
+const STICK_MAX = 45;        // px: the knob doesn't go further than this (the centre is dragged along)
 const AIM_TOL = 0.05;        // rad: close enough to the stick's direction (half a tick of turning)
 
 export class Input {
@@ -44,37 +44,63 @@ export class Input {
     });
 
     const side = (e) => (e.clientX < innerWidth / 2 ? -1 : 1);
+    // Mouse (and pen): pointer events, hold the left or right half.
     surface.addEventListener('pointerdown', (e) => {
-      if (!this.enabled) return;
+      if (!this.enabled || e.pointerType === 'touch') return;
       e.preventDefault();
       try { surface.setPointerCapture(e.pointerId); } catch {}
-      if (e.pointerType === 'mouse') { this.press('p' + e.pointerId, side(e)); return; }
-      // touch / pen: a new stick where the thumb landed (the newest thumb steers)
-      this.stick = { id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, aim: null };
-      this.sticks.push(this.stick);
-      this.onStick?.(this.stick);
+      this.press('p' + e.pointerId, side(e));
     });
     surface.addEventListener('pointermove', (e) => {
-      const st = this.sticks.find((s) => s.id === e.pointerId);
-      if (st) {
-        let dx = e.clientX - st.x0, dy = e.clientY - st.y0;
+      const entry = this.stack.find((s) => s.src === 'p' + e.pointerId);
+      if (entry) entry.dir = side(e);
+    });
+    const up = (e) => this.release('p' + e.pointerId);
+    surface.addEventListener('pointerup', up);
+    surface.addEventListener('pointercancel', up);
+    surface.addEventListener('lostpointercapture', up);
+
+    // Touch: the stick, with touch events. Cancelling them (preventDefault) keeps
+    // the browser from ever taking a held thumb over for a gesture, which with
+    // pointer events can silently end the touch (no more steering until the
+    // thumb is lifted and put down again).
+    const opts = { passive: false };
+    surface.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (!this.enabled) return;
+      for (const t of e.changedTouches) {
+        // a new stick where the thumb landed (the newest thumb steers)
+        this.stick = { id: t.identifier, x0: t.clientX, y0: t.clientY, x: t.clientX, y: t.clientY, aim: null };
+        this.sticks.push(this.stick);
+      }
+      this.onStick?.(this.stick);
+    }, opts);
+    surface.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      for (const t of e.changedTouches) {
+        let st = this.sticks.find((s) => s.id === t.identifier);
+        if (!st) {
+          // a thumb we lost track of (e.g. after a notification): it steers again from here
+          if (!this.enabled) continue;
+          st = this.stick = { id: t.identifier, x0: t.clientX, y0: t.clientY, x: t.clientX, y: t.clientY, aim: null };
+          this.sticks.push(st);
+        }
+        let dx = t.clientX - st.x0, dy = t.clientY - st.y0;
         const d = Math.hypot(dx, dy);
         if (d > STICK_MAX) {
           // drag the stick's centre along, so turning back is quick
           st.x0 += (dx / d) * (d - STICK_MAX); st.y0 += (dy / d) * (d - STICK_MAX);
-          dx = e.clientX - st.x0; dy = e.clientY - st.y0;
+          dx = t.clientX - st.x0; dy = t.clientY - st.y0;
         }
-        st.x = e.clientX; st.y = e.clientY;
+        st.x = t.clientX; st.y = t.clientY;
         st.aim = Math.hypot(dx, dy) > STICK_DEAD ? Math.atan2(dy, dx) : st.aim;
         if (st === this.stick) this.onStick?.(st);
-        return;
       }
-      const entry = this.stack.find((s) => s.src === 'p' + e.pointerId);
-      if (entry) entry.dir = side(e);
-    });
-    const up = (e) => {
-      const i = this.sticks.findIndex((s) => s.id === e.pointerId);
-      if (i >= 0) {
+    }, opts);
+    const touchUp = (e) => {
+      for (const t of e.changedTouches) {
+        const i = this.sticks.findIndex((s) => s.id === t.identifier);
+        if (i < 0) continue;
         const wasActive = this.sticks[i] === this.stick;
         this.sticks.splice(i, 1);
         if (wasActive) {
@@ -82,11 +108,15 @@ export class Input {
           this.onStick?.(this.stick);
         }
       }
-      this.release('p' + e.pointerId);
+      // whatever the browser says, only thumbs that are really still down count
+      const down = new Set([...e.touches].map((t) => t.identifier));
+      if (this.sticks.some((s) => !down.has(s.id))) {
+        this.sticks = this.sticks.filter((s) => down.has(s.id));
+        if (this.stick && !down.has(this.stick.id)) { this.stick = this.sticks[this.sticks.length - 1] || null; this.onStick?.(this.stick); }
+      }
     };
-    surface.addEventListener('pointerup', up);
-    surface.addEventListener('pointercancel', up);
-    surface.addEventListener('lostpointercapture', up);
+    surface.addEventListener('touchend', touchUp, opts);
+    surface.addEventListener('touchcancel', touchUp, opts);
     surface.addEventListener('contextmenu', (e) => e.preventDefault());
 
     addEventListener('blur', () => this.clear());
