@@ -37,7 +37,7 @@ function reloadForNewVersion() {
 
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const net = new Net();
-const input = new Input(canvas);
+const input = new Input(canvas, document.getElementById('steer'));
 // ---------------------------------------------------------------- skills
 // Two skills, picked in the menu (saved in localStorage), used with the buttons
 // on the right (touch), Space / Shift (keyboard) or A / B (gamepad).
@@ -61,15 +61,8 @@ for (const b of skillBtns) {
 }
 if (isTouch) { skillBar.classList.add('touch'); document.documentElement.classList.add('touch'); }
 
-// The steering stick under the thumb (touch)
-const stickEl = document.getElementById('stick');
-input.onStick = (st) => {
-  if (!st || mode !== 'game' || !game.controlling) { show(stickEl, false); return; }
-  show(stickEl);
-  stickEl.style.transform = `translate(${st.x0}px, ${st.y0}px)`;
-  const dx = st.x - st.x0, dy = st.y - st.y0, d = Math.hypot(dx, dy), k = d > 44 ? 44 / d : 1;
-  stickEl.firstElementChild.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
-};
+// The ◀ ▶ steering pad (touch): shown with the skill buttons, lit while held
+const steerEl = document.getElementById('steer');
 const game = new ClientGame(net);
 const renderer = new Renderer(canvas, $('minimap'));
 
@@ -95,7 +88,7 @@ function setMode(m) {
   mode = m;
   input.enabled = m === 'game';
   show(ui.hud, m === 'game');
-  if (m !== 'game') { ui.center.innerHTML = ''; show(stickEl, false); }
+  if (m !== 'game') ui.center.innerHTML = '';
 }
 
 function toMenu(status = '') {
@@ -783,11 +776,15 @@ function frame(now) {
     else if (beat === 0 && lastBeat > 0) sound.play('go');
     lastBeat = beat;
   }
-  if (toGo > 0) ui.center.innerHTML = `${Math.ceil(toGo)}<small>${isTouch ? 'drag a thumb to steer' : '← → steer · Space / Shift skills'}</small>`;
+  if (toGo > 0) ui.center.innerHTML = `${Math.ceil(toGo)}<small>${isTouch ? 'hold \u25C0 \u25B6 to steer' : '← → steer · Space / Shift skills'}</small>`;
   else if (toGo > -0.8) ui.center.textContent = 'GO!';
   else if (now < flashUntil) { /* showing a power-up warning */ }
   else if (ui.center.innerHTML) ui.center.innerHTML = '';
-  if (!game.controlling && !stickEl.hidden) show(stickEl, false);
+  if (isTouch && !steerEl.hidden) {
+    const t = input.turn;
+    steerEl.firstElementChild.classList.toggle('on', t < 0);
+    steerEl.lastElementChild.classList.toggle('on', t > 0);
+  }
 
 
   if (now - hudAt > 200) {
@@ -810,6 +807,7 @@ function showSkillBar() {
   const el = $('fuel');
   show(el, !!me);
   show(skillBar, !!me);
+  show(steerEl, !!me && isTouch);
   if (!me) return;
   el.innerHTML = `<span class="ok">\u26FD ${me.fuel}</span><span class="can">/${MAX_FUEL}</span>`;
   el.title = 'Fuel: collect the orange dots, spend it on your skills';

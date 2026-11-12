@@ -119,14 +119,14 @@ async function main() {
     }
 
     if (!QUICK) {
-      // Steer with the stick (drag a thumb) so we spiral and crash, then wait for the round to end.
+      // Hold ▶ on the steering pad so we spiral and crash, then wait for the round to end.
+      if (!(await visible(p, '#steer'))) problems.push('steering pad: not shown on the phone');
+      const pad = await p.locator('#steer div').last().boundingBox();
       const cdp = await p.context().newCDPSession(p);
-      const tp = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1 }] });
-      await tp('touchStart', 120, 600); await tp('touchMove', 140, 560); await tp('touchMove', 170, 520);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: pad.x + pad.width / 2, y: pad.y + pad.height / 2, id: 1 }] });
       await p.waitForTimeout(250);
-      if (!(await visible(p, '#stick'))) problems.push('stick: not shown while dragging');
-      await shot(p, '05c-phone-stick');
-      await tp('touchMove', 200, 600);
+      if (!(await p.evaluate(() => document.querySelector('#steer div:last-child').classList.contains('on')))) problems.push('steering pad: ▶ not lit while held');
+      await shot(p, '05c-phone-steer');
       const box = p.viewportSize();
       await p.waitForSelector('#dead:not([hidden]), #end:not([hidden])', { timeout: 240000 });
       if (await visible(p, '#dead')) await shot(p, '06-phone-dead');
