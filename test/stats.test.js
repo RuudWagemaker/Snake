@@ -397,3 +397,21 @@ test('fuel refills slowly by itself, up to the maximum', () => {
   room.step(); room.step();
   if (me.alive) assert.equal(me.fuel, 10);
 });
+
+test('fuel magnet: a dot next to the path is collected without an exact hit', () => {
+  const server = { clients: new Set(), removeRoom() {}, stats: null };
+  const fake = { ws: { readyState: 1 }, name: 'me', token: A, inputs: new InputBuffer(), send() {}, sendBinary() {}, sendRaw() {} };
+  const room = new Room(server, 1);
+  room.addClient(fake);
+  while (room.state !== 'playing') room.step();
+  const r = room.round;
+  while (r.tick <= r.playTick) room.step();
+  const me = fake.player;
+  me.fuel = 0;
+  r.items = [];
+  // 30 units ahead, 18 to the side: the snake (going straight) passes 18 units from it
+  const nx = -Math.sin(me.a), ny = Math.cos(me.a);
+  r.items.push({ id: 999, type: 'fuel', x: me.x + Math.cos(me.a) * 30 + nx * 18, y: me.y + Math.sin(me.a) * 30 + ny * 18 });
+  for (let i = 0; i < 20 && me.alive; i++) room.step();
+  if (me.alive) assert.ok(!r.items.some((it) => it.id === 999) && me.fuel >= 1, 'collected');
+});

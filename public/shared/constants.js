@@ -64,6 +64,8 @@ export const POWERUP_TYPES = Object.keys(POWERUPS);
 // client knows about it in time (same trick as the power-ups).
 export const FUEL = { good: true, label: 'Fuel', icon: '\u26FD' };
 export const FUEL_RADIUS = 6;             // fuel is small dots, many of them
+export const FUEL_PICK_R = 22;            // ...collected this close to a head (a small magnet: no exact hit needed)
+export const FUEL_MAGNET_R = 70;          // ...and within this distance they're drawn sliding toward the head
 export const fuelTarget = (n) => Math.max(40, Math.min(120, n * 6)); // dots on the field at the start
 export const FUEL_PER_ROCKET = 5;
 export const MAX_FUEL = 10;

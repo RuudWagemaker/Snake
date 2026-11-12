@@ -2,7 +2,7 @@ import {
   TICK_RATE, MIN_PLAYERS, MAX_PLAYERS, LOBBY_SECONDS, NEXT_ROUND_LOBBY_SECONDS, PRIVATE_LOBBY_SECONDS,
   COUNTDOWN_SECONDS, END_SECONDS, KILLER_LEFT, COLORS, fieldRadius,
   EFFECT_DELAY, ITEM_RADIUS, LINE_WIDTH,
-  FUEL_RADIUS, fuelTarget, FUEL_PER_ROCKET, START_FUEL, FUEL_REGEN, DEATH_DROP_EXTRA, SKILLS, SKILL_IDS, validSkills, MAX_FUEL, ROCKET_SPEED, ROCKET_RANGE, ROCKET_WIDTH, BLAST_R, DT, FIRE_LATE_TICKS,
+  FUEL_RADIUS, FUEL_PICK_R, fuelTarget, FUEL_PER_ROCKET, START_FUEL, FUEL_REGEN, DEATH_DROP_EXTRA, SKILLS, SKILL_IDS, validSkills, MAX_FUEL, ROCKET_SPEED, ROCKET_RANGE, ROCKET_WIDTH, BLAST_R, DT, FIRE_LATE_TICKS,
 } from '../public/shared/constants.js';
 import {
   mulberry32, stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt, hitDist,
@@ -523,7 +523,7 @@ export class Room {
     for (let i = r.items.length - 1; i >= 0; i--) {
       const it = r.items[i];
       const p = r.players.find((q) => q.alive && !deaths.has(q) && q.fuel < MAX_FUEL - 0.5 &&
-        Math.hypot(q.x - it.x, q.y - it.y) < FUEL_RADIUS + q.width / 2);
+        Math.hypot(q.x - it.x, q.y - it.y) < FUEL_PICK_R + q.width / 2);
       if (!p) continue;
       r.items.splice(i, 1);
       p.picks.fuel = (p.picks.fuel || 0) + 1;

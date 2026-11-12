@@ -17,7 +17,7 @@
 //    glide in. While spectating they're shown slightly in the past and
 //    interpolated (smoothest). Either way, if updates stop for a moment they
 //    keep moving instead of freezing.
-import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, FUEL_RADIUS, FUEL, FUEL_PER_ROCKET, MAX_FUEL, FUEL_REGEN, EFFECT_DELAY, ROCKET_RANGE, ROCKET_SPEED, ROCKET_WIDTH, SKILLS, EFFECT_INFO, DEFAULT_SKILLS } from '../shared/constants.js';
+import { TICK_MS, TURN_RATE, DT, LINE_WIDTH, FUEL_PICK_R, FUEL, FUEL_PER_ROCKET, MAX_FUEL, FUEL_REGEN, EFFECT_DELAY, ROCKET_RANGE, ROCKET_SPEED, ROCKET_WIDTH, SKILLS, EFFECT_INFO, DEFAULT_SKILLS } from '../shared/constants.js';
 import { stepSnake, GapSchedule, makeZonePlan, zoneAt, SegGrid, checkHit, modsAt, distSqPointSeg } from '../shared/sim.js';
 import { FLAG_GAP, FLAG_DIED, FLAG_CUT, encodeInput, encodeInputs } from '../shared/protocol.js';
 
@@ -655,7 +655,7 @@ export class ClientGame {
         // Hide a power-up we're about to collect (the server confirms it shortly).
         for (const it of this.items.values()) {
           if (it.type === 'fuel' && this.myFuel >= MAX_FUEL - 0.5) continue; // (nearly) full: the server leaves it
-          if (Math.hypot(it.x - p.x, it.y - p.y) < (it.type === 'fuel' ? FUEL_RADIUS : ITEM_RADIUS) + m.width / 2) it.localPick = performance.now();
+          if (Math.hypot(it.x - p.x, it.y - p.y) < FUEL_PICK_R + m.width / 2) it.localPick = performance.now();
         }
       }
       this.path.push({ x: p.x, y: p.y, a: p.a, t: tt, w: m.width, solid: !m.ghost && (tt <= this.playTick || !this.myGaps.isGap(tt - this.playTick)) });

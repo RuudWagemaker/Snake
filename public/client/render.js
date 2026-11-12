@@ -1,4 +1,4 @@
-import { LINE_WIDTH, MAX_WIDTH, FUEL_RADIUS, ROCKET_SPEED, TICK_RATE } from '../shared/constants.js';
+import { LINE_WIDTH, MAX_WIDTH, FUEL_RADIUS, FUEL_MAGNET_R, ROCKET_SPEED, TICK_RATE } from '../shared/constants.js';
 import { FLAG_GAP, FLAG_CUT } from '../shared/protocol.js';
 import { CHUNK } from './game.js';
 
@@ -144,7 +144,7 @@ export class Renderer {
         this.drawTrail(sn, limit, extra, v, dead ? (sn.dimColor ||= dim(sn.color)) : this.liveColor(sn, f.now), sn.vox || sn.voy ? sn : null, dead);
       }
     }
-    this.drawItems(game, v, f.now);
+    this.drawItems(game, v, f.now, game.controlling ? f.myHead : null);
     this.drawRockets(game, v, f.now, rt);
 
     // Outside the zone
@@ -326,8 +326,12 @@ export class Renderer {
     runs.stroke(ctx, mul, add);
   }
 
-  drawItems(game, v, now) {
+  drawItems(game, v, now, myHead) {
     const ctx = this.ctx;
+    // Magnet: dots near a head are drawn sliding toward it (heads from the last frame)
+    const heads = [];
+    if (myHead) heads.push(myHead);
+    for (const sn of game.list) if (sn.alive && sn !== (myHead ? game.me : null) && sn.drawnX !== undefined) heads.push({ x: sn.drawnX, y: sn.drawnY });
     const pulse = 1 + Math.sin(now / 250) * 0.08;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -335,6 +339,15 @@ export class Renderer {
       if (it.x < v.x0 - 30 || it.x > v.x1 + 30 || it.y < v.y0 - 30 || it.y > v.y1 + 30) continue;
       if (it.localPick && now - it.localPick < 800) continue; // we're picking it up
       if (it.type === 'fuel') {
+        let x = it.x, y = it.y;
+        for (const h of heads) {
+          const dx = h.x - it.x, dy = h.y - it.y, d = Math.hypot(dx, dy);
+          if (d < FUEL_MAGNET_R) {
+            const k = 0.7 * (1 - d / FUEL_MAGNET_R) ** 0.7;
+            x = it.x + dx * k; y = it.y + dy * k;
+            break;
+          }
+        }
         // small glowing dot
         // pops in when it appears, then twinkles
         const age = it.bornAt ? Math.max(0, (now - it.bornAt) / 350) : 1;
@@ -344,14 +357,14 @@ export class Renderer {
           ctx.globalAlpha = (1 - age) * 0.6;
           ctx.strokeStyle = '#ffd8a8';
           ctx.lineWidth = 1.5;
-          ctx.beginPath(); ctx.arc(it.x, it.y, FUEL_RADIUS * (1 + 3 * age), 0, TAU); ctx.stroke();
+          ctx.beginPath(); ctx.arc(x, y, FUEL_RADIUS * (1 + 3 * age), 0, TAU); ctx.stroke();
         }
         ctx.globalAlpha = 0.4;
         ctx.fillStyle = FUEL_COL;
-        ctx.beginPath(); ctx.arc(it.x, it.y, FUEL_RADIUS * 1.8 * tw, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(x, y, FUEL_RADIUS * 1.8 * tw, 0, TAU); ctx.fill();
         ctx.globalAlpha = 1;
         ctx.fillStyle = '#ffd8a8';
-        ctx.beginPath(); ctx.arc(it.x, it.y, FUEL_RADIUS * 0.8 * pop, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(x, y, FUEL_RADIUS * 0.8 * pop, 0, TAU); ctx.fill();
       }
     }
     // Floating "+SPEED" texts where something was picked up
