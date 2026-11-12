@@ -120,7 +120,7 @@ async function main() {
 
     if (!QUICK) {
       // Hold the right half so we spiral and crash, then wait for the round to end.
-      if (!(await visible(p, '#skillbar-l'))) problems.push('skills: no buttons on the left side on the phone');
+      if (!(await visible(p, '#skillbar'))) problems.push('skills: no buttons on the phone');
       const vw = p.viewportSize();
       const cdp = await p.context().newCDPSession(p);
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: vw.width * 0.8, y: vw.height * 0.9, id: 1 }] });

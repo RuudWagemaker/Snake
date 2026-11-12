@@ -44,7 +44,6 @@ const input = new Input(canvas);
 let mySkills = ['rocket', 'jump'];
 try { mySkills = validSkills(JSON.parse(localStorage.getItem('cr-skills') || 'null')); } catch {}
 const skillBar = document.getElementById('skillbar');
-const skillBarL = document.getElementById('skillbar-l'); // touch only: the same 2 skills on the left
 const skillBtns = [...document.querySelectorAll('.skillbar .skill')];
 function useSlot(slot) {
   if (mode !== 'game' || !game.active || !game.me) return;
@@ -61,7 +60,7 @@ for (const b of skillBtns) {
   b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); useSlot(Number(b.dataset.slot)); });
   b.addEventListener('contextmenu', (e) => e.preventDefault());
 }
-if (isTouch) { skillBar.classList.add('touch'); skillBarL.classList.add('touch'); document.documentElement.classList.add('touch'); }
+if (isTouch) { skillBar.classList.add('touch'); document.documentElement.classList.add('touch'); }
 
 // Touch: faint ◀ ▶ in the bottom corners, lit while that half is held
 const steerL = document.getElementById('steer-l'), steerR = document.getElementById('steer-r');
@@ -810,7 +809,7 @@ function showSkillBar() {
   const el = $('fuel');
   show(el, !!me);
   show(skillBar, !!me);
-  for (const el of [skillBarL, steerL, steerR]) show(el, !!me && isTouch);
+  for (const el of [steerL, steerR]) show(el, !!me && isTouch);
   if (!me) return;
   el.innerHTML = `<span class="ok">\u26FD ${Math.floor(fuel)}</span><span class="fbar"><i style="width:${Math.round((100 * fuel) / MAX_FUEL)}%"></i></span>`;
   el.title = 'Fuel: collect the orange dots, spend it on your skills';

@@ -134,20 +134,12 @@ html.touch .no-touch { display: none; }
 .skill-cards button small { color: var(--muted); font-size: 11px; font-weight: 500; line-height: 1.3; }
 .skill-cards button.on { border-color: #ff922b; background: #2a2233; }
 .skillbar { position: absolute; right: max(14px, env(safe-area-inset-right)); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 6px); display: flex; gap: 12px; pointer-events: none; }
-.skillbar.touch { flex-direction: column-reverse; }
 .skill {
   position: relative; width: 62px; height: 62px; margin: 0; padding: 0; border-radius: 50%; pointer-events: auto; touch-action: none;
   background: rgba(38,48,73,.8); border: 3px solid rgba(255,255,255,.12); overflow: hidden; letter-spacing: 0;
 }
-.skillbar.touch { right: calc(max(14px, env(safe-area-inset-right)) - 16px); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 6px - 16px); gap: 0; }
-/* touch: a transparent outer border makes the touch area bigger; the visible button is the same size */
-.skillbar.touch .skill { width: 108px; height: 108px; border: 16px solid transparent; background-clip: padding-box; box-shadow: inset 0 0 0 3px rgba(255,255,255,.12); }
-.skillbar.touch .skill.ready { border-color: transparent; box-shadow: inset 0 0 0 3px #fff; }
-.skillbar.touch .skill + .skill { margin-bottom: -20px; } /* keeps the visible gap; the touch areas overlap a bit */
-.skillbar.touch .skill.on { border-color: transparent; box-shadow: inset 0 0 0 3px #51cf66; }
 .skill i { position: absolute; left: 0; bottom: 0; width: 100%; background: rgba(255,146,43,.35); transition: height .15s; }
 .skill span { position: relative; font-size: 26px; line-height: 1; filter: grayscale(1) opacity(.55); }
-.skillbar.touch .skill span { font-size: 32px; }
 .skill b { position: absolute; left: 50%; bottom: 5px; transform: translateX(-50%); font-size: 11px; color: #ffd8a8; }
 .skill kbd { position: absolute; top: 5px; left: 50%; transform: translateX(-50%); font: 700 9px system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.55); border-radius: 5px; padding: 1px 4px; }
 .skillbar.touch .skill kbd { display: none; }
@@ -173,13 +165,19 @@ html.touch .no-touch { display: none; }
 #feed { position: absolute; left: max(12px, env(safe-area-inset-left)); bottom: max(12px, env(safe-area-inset-bottom)); font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
 body:has(#dead:not([hidden])) #feed { display: none; }
 #feed { max-width: calc(100% - 130px); }
-/* touch: both skill buttons on each side, a bit above where the thumbs rest */
-.skillbar.touch { bottom: calc(max(14px, env(safe-area-inset-bottom)) + 22%); }
-.skillbar.left { right: auto; left: calc(max(14px, env(safe-area-inset-left)) - 16px); }
 .steer-ind { position: absolute; bottom: calc(max(18px, env(safe-area-inset-bottom)) + 10px); font-size: 34px; color: rgba(255,255,255,.16); pointer-events: none; transition: color .08s; }
 .steer-ind.left { left: calc(max(14px, env(safe-area-inset-left)) + 16px); }
 .steer-ind.right { right: calc(max(14px, env(safe-area-inset-right)) + 16px); }
 .steer-ind.on { color: rgba(255,255,255,.6); }
+/* touch: the 2 skills side by side at the bottom middle, between the thumbs. Small buttons with
+   a transparent outer border, so the touch area is much bigger than what you see. */
+.skillbar.touch { --hit: 22px; right: auto; left: 50%; transform: translateX(-50%); bottom: calc(max(10px, env(safe-area-inset-bottom)) + 4px - var(--hit)); gap: 0; }
+.skillbar.touch .skill { width: calc(58px + 2 * var(--hit)); height: calc(58px + 2 * var(--hit)); border: var(--hit) solid transparent; background-clip: padding-box; box-shadow: inset 0 0 0 2px rgba(255,255,255,.12); }
+.skillbar.touch .skill + .skill { margin-left: calc(14px - 2 * var(--hit)); } /* visible gap 14px; the touch areas meet in the middle */
+.skillbar.touch .skill.ready { border-color: transparent; box-shadow: inset 0 0 0 2px #fff; }
+.skillbar.touch .skill.on { border-color: transparent; box-shadow: inset 0 0 0 2px #51cf66; }
+.skillbar.touch .skill span { font-size: 24px; }
+.skillbar.touch .skill b { bottom: 3px; font-size: 10px; }
 /* touch: the kill feed goes up top (the thumbs cover the bottom) */
 html.touch #feed { top: calc(max(12px, env(safe-area-inset-top)) + 112px); bottom: auto; left: auto; right: max(12px, env(safe-area-inset-right)); align-items: flex-end; max-width: 70%; }
 #feed div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
