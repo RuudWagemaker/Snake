@@ -280,6 +280,30 @@ test('CrazyGames page: files from here, their SDK, no ads or redirect', { timeou
   }
 });
 
+test('media files from the data folder, with range requests', { timeout: 10000 }, async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'cr-media-'));
+  const { mkdirSync } = await import('node:fs');
+  mkdirSync(path.join(dir, 'media'));
+  writeFileSync(path.join(dir, 'media', 'clip.mp4'), Buffer.from('0123456789'));
+  const srv = await startServer({ port: 0, statsFile: path.join(dir, 'stats.json') });
+  try {
+    const base = `http://localhost:${srv.port}/media/`;
+    const all = await fetch(base + 'clip.mp4');
+    assert.equal(all.status, 200);
+    assert.equal(all.headers.get('content-type'), 'video/mp4');
+    assert.equal(await all.text(), '0123456789');
+    const part = await fetch(base + 'clip.mp4', { headers: { range: 'bytes=2-4' } });
+    assert.equal(part.status, 206);
+    assert.equal(part.headers.get('content-range'), 'bytes 2-4/10');
+    assert.equal(await part.text(), '234');
+    assert.equal((await fetch(base + 'nope.mp4')).status, 404);
+    assert.equal((await fetch(base + '..%2Fstats.json')).status, 404);
+  } finally {
+    await srv.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('admin page needs the key', { timeout: 10000 }, async () => {
   const srv = await startServer({ port: 0, adminKey: 'secret-key' });
   try {

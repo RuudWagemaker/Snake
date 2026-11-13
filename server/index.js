@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, createReadStream } from 'node:fs';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -20,6 +20,8 @@ const TYPES = {
   '.png': 'image/png',
   '.json': 'application/json',
   '.webmanifest': 'application/manifest+json',
+  '.mp4': 'video/mp4',
+  '.jpg': 'image/jpeg',
 };
 
 /** A .zip with one file in it (stored, not compressed): the CrazyGames upload. */
@@ -132,6 +134,28 @@ async function serveStatic(req, res, ctx = {}) {
     }
     return;
   }
+  if (urlPath.startsWith('/media/') && ctx.mediaDir) {
+    // Promo files (videos, covers) kept in the data volume, not in git: /data/media/<name>
+    const name = urlPath.slice(7);
+    if (!/^[\w-]+\.(mp4|png|jpg)$/.test(name)) { res.writeHead(404).end(); return; }
+    const file = path.join(ctx.mediaDir, name);
+    let size;
+    try { size = statSync(file).size; } catch { res.writeHead(404, { 'content-type': 'text/plain' }).end('not found'); return; }
+    const head = { 'content-type': TYPES[path.extname(name)], 'accept-ranges': 'bytes', 'cache-control': 'no-cache', 'x-robots-tag': 'noindex' };
+    const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+    if (m && (m[1] || m[2])) {
+      // phones play videos in pieces (range requests)
+      const start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
+      const end = m[1] && m[2] ? Math.min(size - 1, Number(m[2])) : size - 1;
+      if (start > end || start >= size) { res.writeHead(416, { 'content-range': `bytes */${size}` }).end(); return; }
+      res.writeHead(206, { ...head, 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': end - start + 1 });
+      createReadStream(file, { start, end }).pipe(res);
+    } else {
+      res.writeHead(200, { ...head, 'content-length': size });
+      createReadStream(file).pipe(res);
+    }
+    return;
+  }
   if (urlPath === '/healthz') {
     res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
     return;
@@ -194,7 +218,8 @@ export async function startServer({ port = 3000, host, statsFile = null, adminKe
   await initRtc();
   const stats = new Stats(statsFile);
   const game = new GameServer(BUILD, stats, { googleClientId, ...(verifyGoogle ? { verifyGoogle } : {}) });
-  const server = http.createServer((req, res) => serveStatic(req, res, { stats, game, adminKey, canonicalHost, ads }));
+  const mediaDir = statsFile ? path.join(path.dirname(statsFile), 'media') : null;
+  const server = http.createServer((req, res) => serveStatic(req, res, { stats, game, adminKey, canonicalHost, ads, mediaDir }));
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096, perMessageDeflate: false });
   wss.on('connection', (ws) => game.onConnection(ws));
   game.start();
