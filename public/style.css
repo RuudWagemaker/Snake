@@ -241,3 +241,4 @@ html.touch #feed { top: calc(max(12px, env(safe-area-inset-top)) + 112px); botto
   .howto { margin-top: 10px; font-size: 13px; line-height: 1.5; }
   #version { margin-top: 6px; }
 }
+#fresh { margin-top: 14px; }

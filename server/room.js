@@ -1,6 +1,6 @@
 import {
   TICK_RATE, MIN_PLAYERS, MAX_PLAYERS, LOBBY_SECONDS, NEXT_ROUND_LOBBY_SECONDS, PRIVATE_LOBBY_SECONDS,
-  COUNTDOWN_SECONDS, END_SECONDS, KILLER_LEFT, COLORS, fieldRadius,
+  COUNTDOWN_SECONDS, END_SECONDS, KILLER_LEFT, COLORS, fieldRadius, ZONE_TOTAL_SECONDS, WAIT_FOR_NEXT_SECONDS,
   ITEM_RADIUS, LINE_WIDTH, SELF_IGNORE_TICKS,
   FUEL_RADIUS, FUEL_PICK_R, fuelTarget, FUEL_PER_ROCKET, START_FUEL, FUEL_REGEN, DEATH_DROP_EXTRA, SKILLS, SKILL_IDS, validSkills, MAX_FUEL, ROCKET_SPEED, ROCKET_RANGE, ROCKET_WIDTH, BLAST_R, DT, FIRE_LATE_TICKS,
 } from '../public/shared/constants.js';
@@ -72,6 +72,24 @@ export class Room {
     return !this.code && this.state === 'lobby' && this.clients.size < MAX_PLAYERS;
   }
 
+  /** Roughly how many seconds the running match still lasts (0 while showing results). */
+  endsIn() {
+    if (this.state === 'ended') return 0; // results on screen; waitingInfo adds the time left
+    if (this.state !== 'playing' || !this.round) return Infinity;
+    const r = this.round;
+    const left = ZONE_TOTAL_SECONDS - Math.max(0, r.tick - r.playTick) / TICK_RATE;
+    // few snakes left: they usually crash into each other well before the zone closes
+    return Math.max(0, r.aliveCount <= 3 ? Math.min(left, 20) : left);
+  }
+
+  /**
+   * A public match that's nearly over: a new player waits here and plays the next
+   * round with this group, instead of starting alone (while there are few players).
+   */
+  canWait() {
+    return !this.code && this.clients.size < MAX_PLAYERS && this.endsIn() <= WAIT_FOR_NEXT_SECONDS;
+  }
+
   full() {
     return this.clients.size >= MAX_PLAYERS;
   }
@@ -91,7 +109,7 @@ export class Room {
     if (this.clients.size === 1) this.timer = this.firstLobbyTicks();
     if (this.clients.size >= MAX_PLAYERS) this.timer = Math.min(this.timer, TICK_RATE);
     if (this.state === 'lobby') this.broadcastLobby();
-    else c.send({ ...this.lobbyInfo(), waiting: true }); // friends' room mid-match: joins the next round
+    else c.send(this.waitingInfo()); // match running: joins the next round
   }
 
   removeClient(c) {
@@ -140,6 +158,17 @@ export class Room {
     };
   }
 
+  /** Keep players who wait for the next round up to date (once a second). */
+  updateWaiting() {
+    let msg = null;
+    for (const c of this.clients) if (!c.player) c.sendRaw(msg ||= JSON.stringify(this.waitingInfo()));
+  }
+
+  /** For players waiting for the next round while a match is running. */
+  waitingInfo() {
+    return { ...this.lobbyInfo(), waiting: true, alive: this.round ? this.round.aliveCount : 0, endsIn: Math.ceil((this.state === 'ended' ? this.timer / TICK_RATE : this.endsIn() + END_SECONDS) + NEXT_ROUND_LOBBY_SECONDS) };
+  }
+
   broadcastLobby() {
     this.broadcast(this.lobbyInfo());
   }
@@ -154,8 +183,10 @@ export class Room {
         break;
       case 'playing':
         this.simulate();
+        if (this.state === 'playing' && this.round.tick % TICK_RATE === 0) this.updateWaiting();
         break;
       case 'ended':
+        if (this.timer % TICK_RATE === 0) this.updateWaiting();
         if (--this.timer <= 0) {
           this.state = 'lobby';
           this.timer = NEXT_ROUND_LOBBY_SECONDS * TICK_RATE;

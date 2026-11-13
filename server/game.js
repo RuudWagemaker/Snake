@@ -158,7 +158,8 @@ class Client {
         if (validToken(msg.token)) this.token = msg.token;
         this.skin = this.server.allowedSkin(this.token, msg.skin);
         this.skills = validSkills(msg.skills);
-        this.server.join(this, validRoomCode(msg.room) ? msg.room : null);
+        // fresh: "Start a new game" instead of waiting for a running match to end
+        this.server.join(this, validRoomCode(msg.room) ? msg.room : null, msg.fresh === true);
         break;
       case 'leave':
         if (this.room) this.room.removeClient(this);
@@ -304,11 +305,18 @@ export class GameServer {
   }
 
   /** Public matchmaking, or a friends' room when `code` is given. */
-  join(c, code = null) {
+  join(c, code = null, fresh = false) {
+    const from = c.room;
     if (c.room) c.room.removeClient(c);
     let room = null;
     for (const r of this.rooms) {
       if (code ? r.code === code : r.canJoin()) { room = r; break; }
+    }
+    if (!room && !code && !fresh) {
+      // nobody about to start: wait for the public match that ends first (not the one just left)
+      for (const r of this.rooms) {
+        if (r !== from && r.canWait() && (!room || r.endsIn() < room.endsIn())) room = r;
+      }
     }
     if (room && code && room.full()) {
       c.send({ t: 'error', msg: 'That room is full.' });

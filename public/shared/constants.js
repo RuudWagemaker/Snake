@@ -41,6 +41,11 @@ export const ZONE_PHASES = [
   { hold: 5, shrink: 10, f: 0 },
 ];
 
+/** Seconds from GO until the zone has closed completely. */
+export const ZONE_TOTAL_SECONDS = ZONE_PHASES.reduce((s, p) => s + p.hold + p.shrink, 0);
+/** A new player joins a running public match's next round if it ends within this many seconds. */
+export const WAIT_FOR_NEXT_SECONDS = 35;
+
 export const GRID_CELL = 48;
 
 // Power-ups. Green ones help the picker; red ones hit opponents near the picker.

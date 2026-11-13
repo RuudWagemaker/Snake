@@ -463,8 +463,10 @@ async function keepAwake() {
 // A match was played since the last join: on CrazyGames, the next join may show a video ad first.
 let adDue = false;
 let adBusy = false;
-function join() {
+/** Join a match. {fresh: true}: start a new game instead of waiting for a running match to end. */
+function join(opts) {
   if (adBusy) return;
+  const fresh = opts?.fresh === true;
   const name = ui.name.value.trim();
   saveName(name);
   hidePanels();
@@ -473,6 +475,7 @@ function join() {
   ui.lobbyText.textContent = 'Finding a match…';
   ui.lobbySub.textContent = '';
   show(ui.lobbyRoom, false);
+  show($('fresh'), false);
   ui.inviteMsg.textContent = '';
   if (adDue && platform.ready) {
     adDue = false;
@@ -480,11 +483,11 @@ function join() {
     net.send({ t: 'leave' }); // out of any match while the ad plays
     platform.midgameAd({ started: () => sound.hold(true), done: () => sound.hold(false) }).then(() => {
       adBusy = false;
-      if (mode === 'lobby') join();
+      if (mode === 'lobby') join(opts);
     });
     return;
   }
-  net.send({ t: 'join', name, build: BUILD, token: TOKEN, room: roomCode, skin, skills: mySkills });
+  net.send({ t: 'join', name, build: BUILD, token: TOKEN, room: roomCode, skin, skills: mySkills, fresh: fresh || undefined });
   goFullscreen();
   keepAwake();
 }
@@ -497,6 +500,7 @@ $('version').textContent = BUILD && !BUILD.includes('%') ? `version ${BUILD.slic
 ui.play.addEventListener('click', join);
 ui.name.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !ui.play.disabled) join(); });
 $('again').addEventListener('click', join);
+$('fresh').addEventListener('click', () => join({ fresh: true }));
 $('to-menu').addEventListener('click', () => { net.send({ t: 'leave' }); toMenu(); });
 addEventListener('keydown', (e) => {
   if (e.code === 'Enter' && mode === 'menu' && !ui.menu.hidden && document.activeElement !== ui.name && !ui.play.disabled) join();
@@ -660,7 +664,12 @@ net.onJson = (m) => {
       game.active = false;
       show(ui.lobby);
       show(ui.lobbyRoom, !!m.code);
-      if (m.code) {
+      show($('fresh'), !m.code && !!m.waiting);
+      if (!m.code && m.waiting) {
+        // a public match is nearly over: play its next round with that group
+        ui.lobbyText.textContent = 'Joining the next round';
+        ui.lobbySub.textContent = `A match is finishing${m.alive > 1 ? ` (${m.alive} snakes left)` : ''}\u00a0·\u00a0about ${m.endsIn}s`;
+      } else if (m.code) {
         ui.lobbyText.textContent = m.waiting ? 'A match is being played' : `Friends' room · starting in ${m.startsIn}s`;
         ui.lobbySub.innerHTML = (m.waiting ? "You'll join the next round." : 'Invite friends with the link&nbsp;·&nbsp;bots fill the rest') +
           `<div class="names">${m.names.map(esc).join(' · ')}</div>`;

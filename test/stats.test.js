@@ -304,6 +304,51 @@ test('media files from the data folder, with range requests', { timeout: 10000 }
   }
 });
 
+test('matchmaking: wait for a public match that ends soon, or start a new game', async () => {
+  const { GameServer } = await import('../server/game.js');
+  const { ZONE_TOTAL_SECONDS, WAIT_FOR_NEXT_SECONDS } = await import('../public/shared/constants.js');
+  const gs = new GameServer('t', new Stats());
+  const mk = (name) => {
+    const sent = [];
+    return { sent, ws: { readyState: 1 }, name, token: A, skin: null, skills: ['rocket', 'jump'], inputs: new InputBuffer(),
+      send: (o) => sent.push(o), sendBinary() {}, sendRaw: (raw) => { if (typeof raw === 'string') sent.push(JSON.parse(raw)); } };
+  };
+  const a = mk('a');
+  gs.join(a);
+  const room = a.room;
+  room.startRound();
+  // early in the match: a newcomer gets a room of their own
+  const b = mk('b');
+  gs.join(b);
+  assert.notEqual(b.room, room);
+  gs.join(mk('c'));                // joins b's room (it hasn't started)
+  b.room.startRound();
+  // near the end of a's match: newcomers wait for its next round
+  room.round.tick = room.round.playTick + (ZONE_TOTAL_SECONDS - WAIT_FOR_NEXT_SECONDS + 5) * TICK_RATE;
+  const d = mk('d');
+  gs.join(d);
+  assert.equal(d.room, room);
+  assert.equal(d.player, null);
+  const w = d.sent.find((m) => m.t === 'lobby');
+  assert.equal(w.waiting, true);
+  assert.ok(w.endsIn > 0 && w.endsIn <= WAIT_FOR_NEXT_SECONDS + 15);
+  // ...and get a status update every second while it runs
+  d.sent.length = 0;
+  for (let i = 0; i < TICK_RATE; i++) room.step();
+  assert.ok(d.sent.some((m) => m.t === 'lobby' && m.waiting));
+  // "Start a new game" instead
+  gs.join(d, null, true);
+  assert.notEqual(d.room, room);
+  assert.equal(d.room.state, 'lobby');
+  // a player who leaves a match with "Play again" doesn't wait for that same match
+  gs.join(a);
+  assert.notEqual(a.room, room);
+  // the waiting player is in the next round
+  const e = mk('e');
+  gs.join(e);                      // d's lobby room takes e
+  assert.equal(e.room, d.room);
+});
+
 test('admin page needs the key', { timeout: 10000 }, async () => {
   const srv = await startServer({ port: 0, adminKey: 'secret-key' });
   try {
