@@ -6,6 +6,7 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import { Stats, matchPoints, levelFor, periodKeys } from '../server/stats.js';
 import { cleanName } from '../server/names.js';
+import { regionOf } from '../server/regions.js';
 import { Room } from '../server/room.js';
 import { InputBuffer } from '../server/inputs.js';
 import { startServer } from '../server/index.js';
@@ -225,6 +226,38 @@ test('usage numbers per day for the admin page', () => {
   assert.deepEqual(d, { day: '2026-04-01', visitors: 2, players: 1, newPlayers: 1, matches: 2, roomMatches: 1, avgMatchSecs: 90, matchesPerPlayer: 2, peakOnline: 3 });
 });
 
+test('regions from the time zone, counted per day for the admin page', () => {
+  assert.equal(regionOf('Europe/Amsterdam'), 'Europe');
+  assert.equal(regionOf('America/New_York'), 'US East / Central');
+  assert.equal(regionOf('America/Chicago'), 'US East / Central');
+  assert.equal(regionOf('America/Los_Angeles'), 'US West');
+  assert.equal(regionOf('America/Sao_Paulo'), 'South America');
+  assert.equal(regionOf('America/Argentina/Buenos_Aires'), 'South America');
+  assert.equal(regionOf('Asia/Tokyo'), 'Asia');
+  assert.equal(regionOf('Asia/Dubai'), 'Middle East');
+  assert.equal(regionOf('Australia/Sydney'), 'Oceania');
+  assert.equal(regionOf('Pacific/Honolulu'), 'US West');
+  assert.equal(regionOf('Africa/Lagos'), 'Africa');
+  assert.equal(regionOf(''), 'Unknown');
+  assert.equal(regionOf(42), 'Unknown');
+
+  const s = new Stats();
+  const d1 = Date.UTC(2026, 3, 1, 12), d2 = Date.UTC(2026, 3, 2, 12);
+  s.visit(A, d1, 'Europe'); s.visit(A, d1, 'Europe'); s.visit(B, d1, 'US West');
+  s.regionOnline({ Europe: 1, 'US West': 1 }, d1);
+  s.visit(A, d2, 'Europe'); s.regionOnline({ Europe: 3 }, d2); s.regionOnline({ Europe: 2 }, d2);
+  assert.deepEqual(s.regionUsage(30, d2), [
+    { region: 'Europe', today: 1, visitors: 2, peakOnline: 3 },
+    { region: 'US West', today: 0, visitors: 1, peakOnline: 1 },
+  ]);
+  const dir = mkdtempSync(path.join(tmpdir(), 'cr-regions-'));
+  try {
+    const file = path.join(dir, 'stats.json');
+    const a = new Stats(file); a.visit(A, d1, 'Asia'); a.regionOnline({ Asia: 4 }, d1); a.saveNow();
+    assert.deepEqual(new Stats(file).regionUsage(30, d1), [{ region: 'Asia', today: 1, visitors: 1, peakOnline: 4 }]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('admin page needs the key', { timeout: 10000 }, async () => {
   const srv = await startServer({ port: 0, adminKey: 'secret-key' });
   try {
@@ -234,6 +267,16 @@ test('admin page needs the key', { timeout: 10000 }, async () => {
     const ok = await fetch(base + '?key=secret-key');
     assert.equal(ok.status, 200);
     assert.match(await ok.text(), /Online now/);
+    // a player in Amsterdam shows up under Europe
+    const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
+    await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
+    const got = new Promise((res) => ws.on('message', (m) => { if (String(m).includes('"profile"')) res(); }));
+    ws.send(JSON.stringify({ t: 'profile', token: A, tz: 'Europe/Amsterdam' }));
+    await got;
+    const page = await (await fetch(base + '?key=secret-key')).text();
+    ws.close();
+    assert.match(page, /Where players are/);
+    assert.match(page, /<td>Europe<\/td><td>1<\/td><td>1<\/td><td>1<\/td><td>1<\/td>/);
   } finally {
     await srv.close();
   }

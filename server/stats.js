@@ -152,8 +152,39 @@ export class Stats {
   }
 
   /** Someone opened the game (or came back to the menu). */
-  visit(token, now = Date.now()) {
-    if (validToken(token)) this.day(now).visitors.add(token);
+  visit(token, now = Date.now(), region = null) {
+    if (!validToken(token)) return;
+    const d = this.day(now);
+    if (d.visitors.has(token)) return;
+    d.visitors.add(token);
+    if (region) {
+      d.regions ||= {};
+      d.regions[region] = (d.regions[region] || 0) + 1;
+    }
+  }
+
+  /** Players online right now per region ({region: n}): keeps each region's peak for the day. */
+  regionOnline(counts, now = Date.now()) {
+    const d = this.day(now);
+    d.regionPeak ||= {};
+    for (const [r, n] of Object.entries(counts)) if (n > (d.regionPeak[r] || 0)) d.regionPeak[r] = n;
+  }
+
+  /** Per region: visitors today, visitors over the last `days` days (added up per day), and the highest online. */
+  regionUsage(days = 30, now = Date.now()) {
+    const today = periodKeys(now).day;
+    const out = {};
+    const row = (r) => (out[r] ||= { region: r, today: 0, visitors: 0, peakOnline: 0 });
+    const keys = [...this.daily.keys()].sort().slice(-days);
+    for (const k of keys) {
+      const d = this.daily.get(k);
+      for (const [r, n] of Object.entries(d.regions || {})) {
+        row(r).visitors += n;
+        if (k === today) row(r).today += n;
+      }
+      for (const [r, n] of Object.entries(d.regionPeak || {})) row(r).peakOnline = Math.max(row(r).peakOnline, n);
+    }
+    return Object.values(out).sort((a, b) => b.visitors - a.visitors || b.peakOnline - a.peakOnline);
   }
 
   online(n, now = Date.now()) {

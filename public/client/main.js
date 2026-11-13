@@ -212,7 +212,9 @@ function signOut() {
 showAccount();
 
 function requestProfile() {
-  net.send({ t: 'profile', token: TOKEN });
+  let tz = '';
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
+  net.send({ t: 'profile', token: TOKEN, tz });
 }
 
 function xpBar(p) {

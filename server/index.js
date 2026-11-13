@@ -57,16 +57,24 @@ export function adminPage(stats, game) {
   const body = rows.map((r) => `<tr>${cols.map(([k]) => `<td>${escHtml(r[k])}</td>`).join('')}</tr>`).join('') ||
     `<tr><td colspan="${cols.length}">No data yet</td></tr>`;
   const online = game ? game.clients.size : 0;
+  const now = game ? game.onlineByRegion() : {};
+  const regions = stats.regionUsage(30);
+  for (const r of Object.keys(now)) if (!regions.some((x) => x.region === r)) regions.push({ region: r, today: 0, visitors: 0, peakOnline: 0 });
+  const regionRows = regions.map((r) => `<tr><td>${escHtml(r.region)}</td><td>${now[r.region] || 0}</td><td>${r.today}</td><td>${r.visitors}</td><td>${r.peakOnline}</td></tr>`).join('') ||
+    '<tr><td colspan="5">No data yet</td></tr>';
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex"><title>Line Clash stats</title><style>
 body{font:15px system-ui,sans-serif;background:#0b0f17;color:#e8ecf4;margin:16px}
-h1{font-size:22px;margin:0 0 4px}p{color:#8a94a8;margin:0 0 14px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:18px;margin:22px 0 8px}p{color:#8a94a8;margin:0 0 14px}
 .wrap{overflow-x:auto}table{border-collapse:collapse;white-space:nowrap}
 th,td{padding:6px 10px;text-align:right;border-bottom:1px solid #263049}th{color:#8a94a8;font-weight:600}
 td:first-child,th:first-child{text-align:left;position:sticky;left:0;background:#0b0f17}
 b{color:#51cf66}</style></head><body>
 <h1>Line Clash</h1><p>Online now: <b>${online}</b> · profiles: <b>${stats.profiles.size}</b> · build ${escHtml(BUILD)}</p>
 <div class="wrap"><table><tr>${head}</tr>${body}</table></div>
+<h2>Where players are</h2>
+<div class="wrap"><table><tr><th>Region</th><th>Online now</th><th>Visitors today</th><th>Visitors 30 days</th><th>Peak online 30 days</th></tr>${regionRows}</table></div>
+<p style="margin-top:8px">From the browser's time zone. A second server in a region is worth it once its peak online is regularly 20+.</p>
 <p style="margin-top:14px">Visitors = opened the game. Played = finished at least one match. New = first match ever. Days run in Amsterdam time.</p>
 </body></html>`;
 }

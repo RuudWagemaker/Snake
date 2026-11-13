@@ -7,6 +7,7 @@ import { InputBuffer } from './inputs.js';
 import { RtcPeer, rtcEnabled } from './rtc.js';
 import { cleanName } from './names.js';
 import { verifyGoogleToken } from './google.js';
+import { regionOf } from './regions.js';
 import { Stats, validToken } from './stats.js';
 
 const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
@@ -169,7 +170,9 @@ class Client {
       case 'profile':
         // Sent once after connecting: who am I, and how am I doing?
         if (validToken(msg.token)) this.token = msg.token;
-        this.server.stats.visit(this.token);
+        this.region = regionOf(msg.tz);
+        this.server.stats.visit(this.token, Date.now(), this.region);
+        this.server.stats.regionOnline(this.server.onlineByRegion());
         this.send({ t: 'profile', ...this.server.stats.summary(this.token), online: this.server.clients.size });
         break;
       case 'skill': {
@@ -275,6 +278,13 @@ export class GameServer {
     this.clients.add(c);
     this.stats?.online(this.clients.size);
     c.send({ t: 'hello', online: this.clients.size, build: this.build, rtc: rtcEnabled(), google: this.google.clientId || undefined });
+  }
+
+  /** {region: players online} for the admin page (players whose region we know). */
+  onlineByRegion() {
+    const out = {};
+    for (const c of this.clients) if (c.region) out[c.region] = (out[c.region] || 0) + 1;
+    return out;
   }
 
   onClose(c) {
