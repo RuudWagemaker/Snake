@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { GameServer } from './game.js';
@@ -20,6 +21,19 @@ const TYPES = {
   '.json': 'application/json',
   '.webmanifest': 'application/manifest+json',
 };
+
+/** A .zip with one file in it (stored, not compressed): the CrazyGames upload. */
+export function zipOne(name, data) {
+  const n = Buffer.from(name), crc = zlib.crc32(data);
+  const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(10, 4);
+  local.writeUInt32LE(crc, 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(n.length, 26);
+  const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(10, 6);
+  central.writeUInt32LE(crc, 16); central.writeUInt32LE(data.length, 20); central.writeUInt32LE(data.length, 24); central.writeUInt16LE(n.length, 28);
+  const dirAt = 30 + n.length + data.length, dirLen = 46 + n.length;
+  const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(dirLen, 12); end.writeUInt32LE(dirAt, 16);
+  return Buffer.concat([local, n, data, central, n, end]);
+}
 
 // A fingerprint of the client files. Every deploy that changes the game gets a
 // new one; pages still running an older version reload themselves.
@@ -122,8 +136,19 @@ async function serveStatic(req, res, ctx = {}) {
     res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
     return;
   }
+  if (urlPath === '/crazygames.zip') {
+    // What to upload on CrazyGames: just the loader page (public/crazygames-loader.html) as index.html
+    try {
+      const zip = zipOne('index.html', await readFile(path.join(PUBLIC_DIR, 'crazygames-loader.html')));
+      res.writeHead(200, { 'content-type': 'application/zip', 'content-disposition': 'attachment; filename="lineclash-crazygames.zip"', 'cache-control': 'no-cache' });
+      res.end(zip);
+    } catch {
+      res.writeHead(500).end();
+    }
+    return;
+  }
   if (urlPath === '/crazygames.html') {
-    // The game as CrazyGames shows it: their loader page (tools/crazygames/index.html)
+    // The game as CrazyGames shows it: their loader page (public/crazygames-loader.html)
     // fetches this and writes it into their page. Files come from here (<base>),
     // with their SDK and without our ads, Google sign-in or domain redirect.
     const proto = ctx.canonicalHost ? 'https:' : '';

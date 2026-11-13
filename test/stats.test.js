@@ -270,6 +270,9 @@ test('CrazyGames page: files from here, their SDK, no ads or redirect', { timeou
     assert.match(html, /crazygames-sdk-v3\.js/);
     assert.doesNotMatch(html, /adsbygoogle|%ADS%|%BUILD%/);
     assert.match(html, /var main = '';/); // no move to lineclash.com
+    const zip = Buffer.from(await (await fetch(`http://localhost:${srv.port}/crazygames.zip`)).arrayBuffer());
+    assert.equal(zip.readUInt32LE(0), 0x04034b50);
+    assert.ok(zip.includes("var SERVER = 'https://lineclash.com'") && zip.includes("'/crazygames.html'"));
     const js = await fetch(`http://localhost:${srv.port}/client/main.js`);
     assert.equal(js.headers.get('access-control-allow-origin'), '*');
   } finally {
