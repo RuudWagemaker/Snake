@@ -5,6 +5,11 @@ import { Input } from './input.js';
 import { ClientGame } from './game.js';
 import { Renderer } from './render.js';
 import { sound } from './sound.js';
+import { platform } from './platform.js';
+
+// On CrazyGames: start their SDK first (a few seconds at most; a no-op on lineclash.com).
+await platform.init();
+platform.loading(true);
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -357,17 +362,29 @@ skillsLine();
 
 const CODE_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789';
 const validCode = (s) => typeof s === 'string' && /^[a-z0-9]{4,10}$/.test(s);
-let roomCode = validCode(new URLSearchParams(location.search).get('room')) ? new URLSearchParams(location.search).get('room') : null;
+let roomCode = platform.crazy ? platform.inviteRoom() : new URLSearchParams(location.search).get('room');
+if (!validCode(roomCode)) roomCode = null;
+// "Play with friends" on CrazyGames: straight into a new friends' room once connected.
+let autoJoin = !!roomCode && platform.crazy;
+if (platform.crazy && !roomCode && platform.instantMultiplayer) { roomCode = newRoomCode(); autoJoin = true; }
+function newRoomCode() {
+  const b = new Uint8Array(5);
+  crypto.getRandomValues(b);
+  return [...b].map((x) => CODE_CHARS[x % CODE_CHARS.length]).join('');
+}
 
 function setRoom(code) {
   roomCode = code;
+  platform.room(code);
+  if (platform.crazy) { showRoomInfo(); return; }
   const url = new URL(location.href);
   if (code) url.searchParams.set('room', code);
   else url.searchParams.delete('room');
   history.replaceState(null, '', url);
   showRoomInfo();
 }
-function roomLink() {
+async function roomLink() {
+  if (platform.crazy) return (roomCode && (await platform.inviteLink(roomCode))) || '';
   const url = new URL(location.origin + location.pathname);
   if (roomCode) url.searchParams.set('room', roomCode);
   return url.toString();
@@ -384,6 +401,8 @@ function showRoomInfo() {
 /** Native share sheet on phones, otherwise copy to the clipboard. */
 async function share(text, url, msgEl) {
   const say = (s) => { msgEl.textContent = s; show(msgEl); };
+  url = await url;
+  if (!url) { say('Could not make a link. Try again in a moment.'); return; }
   if (navigator.share) {
     try { await navigator.share({ title: 'Line Clash', text, url }); return; } catch (e) { if (e.name === 'AbortError') return; }
   }
@@ -401,9 +420,7 @@ function invite(msgEl) {
 
 $('friends').addEventListener('click', () => {
   if (roomCode) { invite(ui.status); return; }
-  const b = new Uint8Array(5);
-  crypto.getRandomValues(b);
-  setRoom([...b].map((x) => CODE_CHARS[x % CODE_CHARS.length]).join(''));
+  setRoom(newRoomCode());
   join();
 });
 $('invite').addEventListener('click', () => invite(ui.inviteMsg));
@@ -416,6 +433,12 @@ $('share').addEventListener('click', () => {
     : 'Play Line Clash with me!';
   share(text, roomLink(), ui.shareMsg);
 });
+platform.onJoinRoom((code) => {
+  if (!validCode(code)) return;
+  if (mode !== 'menu') net.send({ t: 'leave' });
+  setRoom(code);
+  if (!ui.play.disabled) join(); else autoJoin = true;
+});
 showRoomInfo();
 // Last known level and missions straight away (fresh ones replace them in a moment).
 try {
@@ -424,7 +447,7 @@ try {
 } catch {}
 
 async function goFullscreen() {
-  if (!isTouch) return;
+  if (!isTouch || platform.crazy) return; // the CrazyGames app is fullscreen already
   try {
     const el = document.documentElement;
     if (!document.fullscreenElement && el.requestFullscreen) await el.requestFullscreen({ navigationUI: 'hide' });
@@ -437,7 +460,11 @@ async function keepAwake() {
   if (wakeLock) wakeLock.addEventListener?.('release', () => { wakeLock = null; });
 }
 
+// A match was played since the last join: on CrazyGames, the next join may show a video ad first.
+let adDue = false;
+let adBusy = false;
 function join() {
+  if (adBusy) return;
   const name = ui.name.value.trim();
   saveName(name);
   hidePanels();
@@ -447,12 +474,25 @@ function join() {
   ui.lobbySub.textContent = '';
   show(ui.lobbyRoom, false);
   ui.inviteMsg.textContent = '';
+  if (adDue && platform.ready) {
+    adDue = false;
+    adBusy = true;
+    net.send({ t: 'leave' }); // out of any match while the ad plays
+    platform.midgameAd({ started: () => sound.hold(true), done: () => sound.hold(false) }).then(() => {
+      adBusy = false;
+      if (mode === 'lobby') join();
+    });
+    return;
+  }
   net.send({ t: 'join', name, build: BUILD, token: TOKEN, room: roomCode, skin, skills: mySkills });
   goFullscreen();
   keepAwake();
 }
 
 ui.name.value = savedName();
+// On CrazyGames, players are known by their CrazyGames name (until they type another).
+if (platform.crazy && !ui.name.value) platform.username().then((n) => { if (n && !ui.name.value) ui.name.value = n.slice(0, 16); });
+sound.blockWhen(() => platform.muted);
 $('version').textContent = BUILD && !BUILD.includes('%') ? `version ${BUILD.slice(0, 7)}` : '';
 ui.play.addEventListener('click', join);
 ui.name.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !ui.play.disabled) join(); });
@@ -586,6 +626,8 @@ game.onEvent = (ev) => {
 
 net.onOpen = () => {
   ui.play.disabled = false;
+  platform.loading(false);
+  if (autoJoin && mode === 'menu') { autoJoin = false; setTimeout(join, 0); }
   ui.play.textContent = roomCode ? 'JOIN ROOM' : 'PLAY';
   if (mode === 'menu') ui.status.textContent = '';
   requestProfile();
@@ -602,7 +644,7 @@ net.onJson = (m) => {
     case 'hello':
       if (m.build && BUILD && m.build !== BUILD && reloadForNewVersion()) return;
       if (m.rtc) net.startRtc();
-      if (m.google) setupGoogle(m.google);
+      if (m.google && !platform.crazy) setupGoogle(m.google);
       ui.status.textContent = m.online > 1 ? `${m.online} players online` : '';
       break;
     case 'lobby':
@@ -648,6 +690,7 @@ net.onJson = (m) => {
       show(ui.shareMsg, false);
       flashUntil = 0;
       setMode('game');
+      adDue = true;
       cam.x = game.me.xs[0];
       cam.y = game.me.ys[0];
       cam.scale = renderer.baseScale;
@@ -709,7 +752,7 @@ net.onBinary = (buf, via) => {
 function showEnd(m) {
   if (mode !== 'game') return;
   const winner = m.winner ? game.snakes.get(m.winner) : null;
-  if (winner && winner === game.me) { ui.endTitle.textContent = '\u{1F3C6} You win!'; sound.play('win'); }
+  if (winner && winner === game.me) { ui.endTitle.textContent = '\u{1F3C6} You win!'; sound.play('win'); platform.happytime(); }
   else if (winner) ui.endTitle.innerHTML = `\u{1F3C6} ${nameHtml(winner)} wins`;
   else ui.endTitle.textContent = 'Draw!';
   ui.ranking.innerHTML = m.ranking.slice(0, 10).map((r) => {
@@ -738,6 +781,7 @@ function frame(now) {
   const dt = Math.min(250, rawDt);
   last = now;
   diag.frame(rawDt);
+  platform.gameplay(mode === 'game' && game.active && game.controlling && !document.hidden);
 
   if (!game.active) {
     renderer.drawIdle(now);

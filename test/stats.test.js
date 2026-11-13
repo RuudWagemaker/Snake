@@ -258,6 +258,25 @@ test('regions from the time zone, counted per day for the admin page', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('CrazyGames page: files from here, their SDK, no ads or redirect', { timeout: 10000 }, async () => {
+  const srv = await startServer({ port: 0, canonicalHost: 'lineclash.com', ads: { client: 'ca-pub-1234567890123456', slot: '' } });
+  try {
+    const res = await fetch(`http://localhost:${srv.port}/crazygames.html`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('access-control-allow-origin'), '*');
+    const html = await res.text();
+    assert.match(html, /<base href="https:\/\/lineclash\.com\/">/);
+    assert.match(html, /<meta name="platform" content="crazygames">/);
+    assert.match(html, /crazygames-sdk-v3\.js/);
+    assert.doesNotMatch(html, /adsbygoogle|%ADS%|%BUILD%/);
+    assert.match(html, /var main = '';/); // no move to lineclash.com
+    const js = await fetch(`http://localhost:${srv.port}/client/main.js`);
+    assert.equal(js.headers.get('access-control-allow-origin'), '*');
+  } finally {
+    await srv.close();
+  }
+});
+
 test('admin page needs the key', { timeout: 10000 }, async () => {
   const srv = await startServer({ port: 0, adminKey: 'secret-key' });
   try {

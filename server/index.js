@@ -122,6 +122,25 @@ async function serveStatic(req, res, ctx = {}) {
     res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
     return;
   }
+  if (urlPath === '/crazygames.html') {
+    // The game as CrazyGames shows it: their loader page (tools/crazygames/index.html)
+    // fetches this and writes it into their page. Files come from here (<base>),
+    // with their SDK and without our ads, Google sign-in or domain redirect.
+    const proto = ctx.canonicalHost ? 'https:' : '';
+    const host = /^[a-z0-9.-]+$/.test(ctx.canonicalHost || '') ? ctx.canonicalHost : String(req.headers.host || '').replace(/[^\w.:-]/g, '');
+    const head = `<base href="${proto}//${host}/">\n  <meta name="platform" content="crazygames">\n` +
+      // the loader page has the SDK already; only load it when opened directly
+      '  <script>window.CrazyGames || document.write(\'<script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"><\\/script>\');</script>';
+    try {
+      const html = (await readFile(path.join(PUBLIC_DIR, 'index.html'))).toString()
+        .replaceAll('%BUILD%', BUILD).replaceAll('%CANONICAL%', '').replace('<!--%ADS%-->', head);
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache', 'access-control-allow-origin': '*', 'x-robots-tag': 'noindex' });
+      res.end(html);
+    } catch {
+      res.writeHead(500).end();
+    }
+    return;
+  }
   if (urlPath.endsWith('/')) urlPath += 'index.html';
   const file = path.resolve(PUBLIC_DIR, '.' + path.posix.normalize(urlPath));
   if (!file.startsWith(PUBLIC_DIR + path.sep)) {
@@ -137,6 +156,8 @@ async function serveStatic(req, res, ctx = {}) {
     res.writeHead(200, {
       'content-type': TYPES[path.extname(file)] || 'application/octet-stream',
       'cache-control': 'no-cache',
+      // the CrazyGames version loads these files (JS modules) from its own domain
+      'access-control-allow-origin': '*',
     });
     res.end(data);
   } catch {

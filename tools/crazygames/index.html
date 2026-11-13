@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <title>Line Clash</title>
+  <!-- CrazyGames version of Line Clash. This page only loads the game from
+       lineclash.com, so it always matches the live game server (upload once). -->
+  <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b0f17; color: #e8ecf4; font: 16px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    #msg { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 20px; }
+    button { font: inherit; font-weight: 700; padding: 10px 22px; border: 0; border-radius: 10px; background: #4dabf7; color: #0b0f17; }
+  </style>
+</head>
+<body>
+  <div id="msg">Loading&hellip;</div>
+  <script>
+    (function () {
+      var SERVER = 'https://lineclash.com';
+      function fail() {
+        document.getElementById('msg').innerHTML = '<div>Could not reach the game server.</div><button onclick="location.reload()">Try again</button>';
+      }
+      fetch(SERVER + '/crazygames.html', { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+        .then(function (html) { document.open(); document.write(html); document.close(); })
+        .catch(fail);
+    })();
+  </script>
+</body>
+</html>

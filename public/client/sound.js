@@ -5,6 +5,8 @@
 let ctx = null;
 let master = null;
 let enabled = true;
+let held = false;          // a video ad is playing
+let blocker = () => false; // e.g. the portal's mute setting
 try { enabled = localStorage.getItem('cr-sound') !== 'off'; } catch {}
 
 function unlock() {
@@ -63,13 +65,17 @@ export const sound = {
     if (enabled) { unlock(); ctx?.resume().then(() => this.play('pickup')).catch(() => {}); }
     return enabled;
   },
+  /** Silence while a video ad plays. */
+  hold(on) { held = !!on; },
+  /** Extra mute rule, e.g. the game portal's own mute setting. */
+  blockWhen(fn) { blocker = fn; },
   play(name) {
-    if (!enabled || !ctx || ctx.state !== 'running' || document.hidden) return;
+    if (!enabled || held || blocker() || !ctx || ctx.state !== 'running' || document.hidden) return;
     try { SOUNDS[name]?.(); } catch {}
   },
   /** Short buzz on phones that support it (Android; iPhones ignore it). Follows the sound setting. */
   vibrate(pattern) {
-    if (!enabled || !navigator.vibrate) return;
+    if (!enabled || held || !navigator.vibrate) return;
     try { navigator.vibrate(pattern); } catch {}
   },
 };

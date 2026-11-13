@@ -90,8 +90,11 @@ export class Net {
   }
 
   connect() {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/ws`);
+    // The game server is wherever the page's files come from (on a game portal
+    // the page itself lives on the portal, with <base href> pointing here).
+    const url = new URL('/ws', document.baseURI);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(url.href);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
     ws.onopen = () => {
