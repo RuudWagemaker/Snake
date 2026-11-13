@@ -380,6 +380,38 @@ test('crash, then "Play again" before the match is over: points and XP still cou
   assert.equal(stats.summary(A).games, 1);
 });
 
+test('hidden skip: a public lobby starts right away only when you are alone in it', { timeout: 15000 }, async () => {
+  const srv = await startServer({ port: 0 });
+  const open = async () => {
+    const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
+    const msgs = [];
+    ws.on('message', (m, bin) => { if (!bin) msgs.push(JSON.parse(String(m))); });
+    await new Promise((res) => ws.once('open', res));
+    const until = async (f) => { for (let i = 0; i < 100; i++) { const m = msgs.find(f); if (m) return m; await new Promise((r) => setTimeout(r, 30)); } return null; };
+    const hello = await until((m) => m.t === 'hello');
+    return { ws, msgs, until, join: (extra = {}) => ws.send(JSON.stringify({ t: 'join', name: 'x', build: hello.build, ...extra })) };
+  };
+  try {
+    const a = await open(), b = await open();
+    a.join();
+    assert.ok((await a.until((m) => m.t === 'lobby')).startsIn > 5);
+    b.join();
+    await b.until((m) => m.t === 'lobby');
+    a.msgs.length = 0;
+    a.ws.send(JSON.stringify({ t: 'go' }));          // two players: ignored
+    const l = await a.until((m) => m.t === 'lobby');
+    assert.ok(l.startsIn > 5);
+    b.ws.close();                                       // b leaves
+    await new Promise((r) => setTimeout(r, 100));
+    a.msgs.length = 0;
+    a.ws.send(JSON.stringify({ t: 'go' }));          // alone now: starts in a second
+    assert.ok(await a.until((m) => m.t === 'lobby' && m.startsIn <= 1));
+    a.ws.close();
+  } finally {
+    await srv.close();
+  }
+});
+
 test('admin page needs the key', { timeout: 10000 }, async () => {
   const srv = await startServer({ port: 0, adminKey: 'secret-key' });
   try {

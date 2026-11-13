@@ -434,6 +434,13 @@ $('friends').addEventListener('click', () => {
 });
 $('invite').addEventListener('click', () => invite(ui.inviteMsg));
 $('go').addEventListener('click', () => net.send({ t: 'go' }));
+// Hidden trick: tap the spinner 3 times quickly to skip the wait (only when you're alone in the lobby).
+let spinTaps = [];
+$('spinner').addEventListener('pointerdown', () => {
+  const now = performance.now();
+  spinTaps = spinTaps.filter((t) => now - t < 1500).concat(now);
+  if (spinTaps.length >= 3) { spinTaps = []; net.send({ t: 'go' }); }
+});
 $('share').addEventListener('click', () => {
   const r = lastResult;
   const text = r

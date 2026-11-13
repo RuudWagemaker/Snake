@@ -165,8 +165,9 @@ class Client {
         if (this.room) this.room.removeClient(this);
         break;
       case 'go':
-        // "Start now" in a friends' room lobby
-        if (this.room && this.room.code) this.room.startSoon();
+        // "Start now" in a friends' room lobby, or the hidden skip (triple-tap the spinner)
+        // in a public lobby where you're the only player (so nobody else's wait is cut short)
+        if (this.room && (this.room.code || this.room.clients.size === 1)) this.room.startSoon();
         break;
       case 'profile':
         // Sent once after connecting: who am I, and how am I doing?
