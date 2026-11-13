@@ -121,11 +121,21 @@ export class Room {
         const placeAfter = this.round.aliveCount - 1;
         this.kill(p, KILLER_LEFT, placeAfter + 1, this.round.tick);
       }
+      // Leaving before the match is over ("Play again" after crashing): their place is
+      // final, so they get their points and XP now. (If they were the last human, the
+      // room closes and the match would never reach recordStats.)
+      if (this.round && this.state === 'playing' && !p.alive) this.recordPlayer(p, c);
     }
     c.room = null;
     c.player = null;
     c.inputs.reset();
     if (this.clients.size === 0) {
+      // the last human left mid-match: it still counts as a match played (admin numbers)
+      if (this.state === 'playing' && this.round && this.server.stats) {
+        const r = this.round;
+        const humans = r.players.filter((pl) => !pl.bot && pl.token).length;
+        if (humans) this.server.stats.matchPlayed({ room: !!this.code, secs: Math.max(0, Math.round((r.tick - r.playTick) / TICK_RATE)), humans });
+      }
       this.server.removeRoom(this);
     } else if (this.state === 'lobby') {
       this.broadcastLobby();
@@ -644,11 +654,19 @@ export class Room {
     const r = this.round;
     const humans = r.players.filter((p) => !p.bot && p.token).length;
     if (humans) stats.matchPlayed({ room: !!this.code, secs: Math.max(0, Math.round((r.tick - r.playTick) / TICK_RATE)), humans });
-    for (const p of r.players) {
-      if (p.bot || !p.token) continue;
-      // Friends' rooms earn XP but don't count for the leaderboards.
-      const res = stats.record(p.token, p.name, p.place, r.n, p.kills, Date.now(), !this.code, p.picks);
-      if (res && p.client && p.client.room === this) p.client.send({ t: 'result', place: p.place, n: r.n, kills: p.kills, ...res });
-    }
+    for (const p of r.players) if (p.client && p.client.room === this) this.recordPlayer(p, p.client);
+    // players who left earlier were recorded when they left; anyone else (e.g. lost connection) now
+    for (const p of r.players) this.recordPlayer(p, null);
+  }
+
+  /** One human's points, XP and missions for this match (once), with the result sent to `client`. */
+  recordPlayer(p, client) {
+    const stats = this.server.stats;
+    const r = this.round;
+    if (!stats || p.bot || !p.token || p.recorded) return;
+    p.recorded = true;
+    // Friends' rooms earn XP but don't count for the leaderboards.
+    const res = stats.record(p.token, p.name, p.place, r.n, p.kills, Date.now(), !this.code, p.picks);
+    if (res && client) client.send({ t: 'result', place: p.place, n: r.n, kills: p.kills, ...res });
   }
 }

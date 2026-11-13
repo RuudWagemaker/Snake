@@ -349,6 +349,37 @@ test('matchmaking: wait for a public match that ends soon, or start a new game',
   assert.equal(e.room, d.room);
 });
 
+test('crash, then "Play again" before the match is over: points and XP still count (once)', async () => {
+  const { GameServer } = await import('../server/game.js');
+  const stats = new Stats();
+  const gs = new GameServer('t', stats);
+  const sent = [];
+  const c = { ws: { readyState: 1 }, name: 'me', token: A, skin: null, skills: ['rocket', 'jump'], inputs: new InputBuffer(),
+    send: (o) => sent.push(o), sendBinary() {}, sendRaw() {} };
+  gs.join(c);
+  const room = c.room;
+  room.startRound();
+  for (let i = 0; i < room.round.playTick + 5; i++) room.step();
+  const p = c.player;
+  p.kills = 2;
+  room.kill(p, -1, room.round.aliveCount, room.round.tick); // crashed
+  const place = p.place;
+  gs.join(c);                                                // "Play again": the old room closes
+  assert.equal(gs.rooms.has(room), false);
+  const res = sent.find((m) => m.t === 'result');
+  assert.ok(res, 'result sent');
+  assert.equal(res.place, place);
+  assert.equal(res.kills, 2);
+  assert.ok(res.xpGained > 0);
+  const prof = stats.summary(A);
+  assert.equal(prof.games, 1);
+  assert.equal(stats.usage()[0].matches, 1);
+  // a match that does end doesn't count them twice
+  room.state = 'playing';
+  room.endRound();
+  assert.equal(stats.summary(A).games, 1);
+});
+
 test('admin page needs the key', { timeout: 10000 }, async () => {
   const srv = await startServer({ port: 0, adminKey: 'secret-key' });
   try {

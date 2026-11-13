@@ -285,6 +285,15 @@ for (const b of ui.lb.querySelectorAll('.tabs button')) b.addEventListener('clic
 let lastResult = null;
 function showResult(m) {
   lastResult = m;
+  if (mode === 'lobby') {
+    // left the match after crashing ("Play again"): its points and XP still count
+    const el = $('lobby-xp');
+    el.innerHTML = `Last match: ${m.ranked ? `+${m.points} point${m.points === 1 ? '' : 's'} · ` : ''}+${m.xpGained} XP` +
+      (m.levelUp ? `<div class="up">\u2B06 Level&nbsp;${m.level}!</div>` : '') +
+      (m.missionsDone || []).map((d) => `<div>\u2713 ${esc(d.text)} · +${d.xp} XP</div>`).join('');
+    show(el);
+    if (m.levelUp) sound.play('win');
+  }
   ui.result.innerHTML = (m.ranked
     ? `<div class="pts">+${m.points} point${m.points === 1 ? '' : 's'} · +${m.xpGained} XP</div>`
     : `<div class="pts">+${m.xpGained} XP</div><div class="small">Friends' rooms don't count for the leaderboard</div>`) +
@@ -476,6 +485,7 @@ function join(opts) {
   ui.lobbySub.textContent = '';
   show(ui.lobbyRoom, false);
   show($('fresh'), false);
+  show($('lobby-xp'), false);
   ui.inviteMsg.textContent = '';
   if (adDue && platform.ready) {
     adDue = false;
@@ -683,6 +693,7 @@ net.onJson = (m) => {
       break;
     case 'start':
       if (mode === 'menu') return;
+      show($('lobby-xp'), false);
       clearTimeout(deadTimer);
       clearTimeout(endTimer);
       hidePanels();
