@@ -22,6 +22,7 @@ const TYPES = {
   '.webmanifest': 'application/manifest+json',
   '.mp4': 'video/mp4',
   '.jpg': 'image/jpeg',
+  '.zip': 'application/zip',
 };
 
 /** A .zip with one file in it (stored, not compressed): the CrazyGames upload. */
@@ -137,7 +138,7 @@ async function serveStatic(req, res, ctx = {}) {
   if (urlPath.startsWith('/media/') && ctx.mediaDir) {
     // Promo files (videos, covers) kept in the data volume, not in git: /data/media/<name>
     const name = urlPath.slice(7);
-    if (!/^[\w-]+\.(mp4|png|jpg)$/.test(name)) { res.writeHead(404).end(); return; }
+    if (!/^[\w-]+\.(mp4|png|jpg|zip)$/.test(name)) { res.writeHead(404).end(); return; }
     const file = path.join(ctx.mediaDir, name);
     let size;
     try { size = statSync(file).size; } catch { res.writeHead(404, { 'content-type': 'text/plain' }).end('not found'); return; }
